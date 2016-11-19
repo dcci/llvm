@@ -907,7 +907,7 @@ void SCCPSolver::visitBinaryOperator(Instruction &I) {
     return markConstant(IV, &I, C);
   }
 
-  // If something is undef, wait for it to resolve.
+  // If something is unknown, wait for it to resolve.
   if (!V1State.isOverdefined() && !V2State.isOverdefined())
     return;
 
