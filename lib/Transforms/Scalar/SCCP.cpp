@@ -414,11 +414,10 @@ private:
     if (!I.second)
       return LV;  // Common case, already in the map.
 
-    if (Constant *C = dyn_cast<Constant>(V)) {
-      // Undef values remain unknown.
-      if (!isa<UndefValue>(V))
-        LV.markConstant(C);          // Constants are constant
-    }
+    // We found a value that's constant, so we set its lattice
+    // value to constant accordingly.
+    if (Constant *C = dyn_cast<Constant>(V))
+      LV.markConstant(C);
 
     // All others are underdefined by default.
     return LV;
@@ -905,9 +904,6 @@ void SCCPSolver::visitBinaryOperator(Instruction &I) {
   if (V1State.isConstant() && V2State.isConstant()) {
     Constant *C = ConstantExpr::get(I.getOpcode(), V1State.getConstant(),
                                     V2State.getConstant());
-    // X op Y -> undef.
-    if (isa<UndefValue>(C))
-      return;
     return markConstant(IV, &I, C);
   }
 
