@@ -1021,6 +1021,7 @@ void SCCPSolver::visitLoadInst(LoadInst &I) {
   Constant *Ptr = PtrVal.getConstant();
 
   // load null is undefined.
+  // XXXdavide: should we constant fold this one?
   if (isa<ConstantPointerNull>(Ptr) && I.getPointerAddressSpace() == 0)
     return;
 
@@ -1038,11 +1039,8 @@ void SCCPSolver::visitLoadInst(LoadInst &I) {
   }
 
   // Transform load from a constant into a constant if possible.
-  if (Constant *C = ConstantFoldLoadFromConstPtr(Ptr, I.getType(), DL)) {
-    if (isa<UndefValue>(C))
-      return;
+  if (Constant *C = ConstantFoldLoadFromConstPtr(Ptr, I.getType(), DL))
     return markConstant(IV, &I, C);
-  }
 
   // Otherwise we cannot say for certain what value this load will produce.
   // Bail out.
@@ -1084,12 +1082,8 @@ CallOverdefined:
 
       // If we can constant fold this, mark the result of the call as a
       // constant.
-      if (Constant *C = ConstantFoldCall(F, Operands, TLI)) {
-        // call -> undef.
-        if (isa<UndefValue>(C))
-          return;
+      if (Constant *C = ConstantFoldCall(F, Operands, TLI))
         return markConstant(I, C);
-      }
     }
 
     // Otherwise, we don't know anything about this call, mark it overdefined.
