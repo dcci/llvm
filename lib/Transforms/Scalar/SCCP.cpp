@@ -786,15 +786,11 @@ void SCCPSolver::visitTerminatorInst(TerminatorInst &TI) {
 
 void SCCPSolver::visitCastInst(CastInst &I) {
   LatticeVal OpSt = getValueState(I.getOperand(0));
-  if (OpSt.isOverdefined())          // Inherit overdefinedness of operand
-    markOverdefined(&I);
-  else if (OpSt.isConstant()) {
-    // Fold the constant as we build.
+  if (OpSt.isOverdefined())
+    return markOverdefined(&I);
+  if (OpSt.isConstant()) {
     Constant *C = ConstantFoldCastOperand(I.getOpcode(), OpSt.getConstant(),
                                           I.getType(), DL);
-    if (isa<UndefValue>(C))
-      return;
-    // Propagate constant value
     markConstant(&I, C);
   }
 }
