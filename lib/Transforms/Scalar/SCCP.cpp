@@ -444,8 +444,6 @@ private:
 
       if (!Elt)
         LV.markOverdefined();      // Unknown sort of constant.
-      else if (isa<UndefValue>(Elt))
-        ; // Undef values remain unknown.
       else
         LV.markConstant(Elt);      // Constants are constant.
     }
@@ -995,8 +993,6 @@ void SCCPSolver::visitGetElementPtrInst(GetElementPtrInst &I) {
   auto Indices = makeArrayRef(Operands.begin() + 1, Operands.end());
   Constant *C =
       ConstantExpr::getGetElementPtr(I.getSourceElementType(), Ptr, Indices);
-  if (isa<UndefValue>(C))
-      return;
   markConstant(&I, C);
 }
 
