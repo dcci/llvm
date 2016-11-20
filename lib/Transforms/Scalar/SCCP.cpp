@@ -963,8 +963,6 @@ void SCCPSolver::visitCmpInst(CmpInst &I) {
   if (V1State.isConstant() && V2State.isConstant()) {
     Constant *C = ConstantExpr::getCompare(
         I.getPredicate(), V1State.getConstant(), V2State.getConstant());
-    if (isa<UndefValue>(C))
-      return;
     return markConstant(IV, &I, C);
   }
 
