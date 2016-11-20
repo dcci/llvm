@@ -1536,14 +1536,7 @@ static bool runSCCP(Function &F, const DataLayout &DL,
   for (Argument &AI : F.args())
     Solver.markAnythingOverdefined(&AI);
 
-  // Solve for constants.
-  bool ResolvedUndefs = true;
-  while (ResolvedUndefs) {
-    Solver.Solve();
-    DEBUG(dbgs() << "RESOLVING UNDEFs\n");
-    ResolvedUndefs = Solver.ResolvedUndefsIn(F);
-  }
-
+  Solver.Solve();
   bool MadeChanges = false;
 
   // If we decided that there are basic blocks that are dead in this function,
