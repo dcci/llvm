@@ -872,15 +872,23 @@ void SCCPSolver::visitSelectInst(SelectInst &I) {
   LatticeVal TVal = getValueState(I.getTrueValue());
   LatticeVal FVal = getValueState(I.getFalseValue());
 
-  // select ?, C, C -> C.
-  if (TVal.isConstant() && FVal.isConstant() &&
-      TVal.getConstant() == FVal.getConstant())
-    return markConstant(&I, FVal.getConstant());
+  if (TVal.isConstant() && FVal.isConstant()) {
+    // FIXME: check if there's a way to just call an API instead of
+    // doing the constant folding dance in SCCP.
+    Constant *TC = TVal.getConstant();
+    Constant *FC = FVal.getConstant();
 
-  if (TVal.isUnknown())   // select ?, undef, X -> X.
-    return mergeInValue(&I, FVal);
-  if (FVal.isUnknown())   // select ?, X, undef -> X.
-    return mergeInValue(&I, TVal);
+    // select ?, C, C -> C.
+    if (TC == FC)
+      return markConstant(&I, TC);
+
+    // select ?, undef, C -> C
+    // select ?, C, undef -> C
+    if (isa<UndefValue>(TC))
+      return markConstant(&I, FC);
+    if (isa<UndefValue>(FC))
+      return markConstant(&I, TC);
+  }
   markOverdefined(&I);
 }
 
