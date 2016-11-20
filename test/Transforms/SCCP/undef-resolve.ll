@@ -135,7 +135,7 @@ define i32 @test6() {
   %t = ashr i32 undef, 31
   ret i32 %t
 ; CHECK-LABEL: @test6(
-; CHECK: ret i32 -1
+; CHECK: ret i32 0
 }
 
 ; Make sure lshr produces a possible value
@@ -154,12 +154,12 @@ define i1 @test8() {
 ; CHECK: ret i1 undef
 }
 
-; Make sure we don't conclude that relational comparisons simplify to undef
+; Make sure we constant-fold to false
 define i1 @test9() {
   %t = icmp ugt i32 undef, -1
   ret i1 %t
 ; CHECK-LABEL: @test9(
-; CHECK: icmp ugt
+; CHECK: ret i1 false
 }
 
 ; Make sure we handle extractvalue
@@ -178,5 +178,5 @@ entry:
   %shr4 = ashr i32 undef, zext (i1 icmp eq (i32* bitcast (i32 (i1)* @test11 to i32*), i32* @GV) to i32)
   ret i32 %shr4
 ; CHECK-LABEL: @test11(
-; CHECK: ret i32 -1
+; CHECK: ret i32 0
 }
