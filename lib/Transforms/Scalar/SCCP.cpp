@@ -65,19 +65,13 @@ class LatticeVal {
     /// constant - This LLVM Value has a specific constant value.
     constant,
 
-    /// forcedconstant - This LLVM Value was thought to be undef until
-    /// ResolvedUndefsIn.  This is treated just like 'constant', but if merged
-    /// with another (different) constant, it goes to overdefined, instead of
-    /// asserting.
-    forcedconstant,
-
     /// overdefined - This instruction is not known to be constant, and we know
     /// it has a value.
     overdefined
   };
 
   /// Val: This stores the current lattice value along with the Constant* for
-  /// the constant if this is a 'constant' or 'forcedconstant' value.
+  /// the constant if this is a 'constant' value.
   PointerIntPair<Constant *, 2, LatticeValueTy> Val;
 
   LatticeValueTy getLatticeValue() const {
@@ -88,9 +82,7 @@ public:
   LatticeVal() : Val(nullptr, unknown) {}
 
   bool isUnknown() const { return getLatticeValue() == unknown; }
-  bool isConstant() const {
-    return getLatticeValue() == constant || getLatticeValue() == forcedconstant;
-  }
+  bool isConstant() const { return getLatticeValue() == constant; }
   bool isOverdefined() const { return getLatticeValue() == overdefined; }
 
   Constant *getConstant() const {
@@ -109,7 +101,7 @@ public:
 
   /// markConstant - Return true if this is a change in status.
   bool markConstant(Constant *V) {
-    if (getLatticeValue() == constant) { // Constant but not forcedconstant.
+    if (getLatticeValue() == constant) {
       assert(getConstant() == V && "Marking constant with different value");
       return false;
     }
@@ -118,16 +110,6 @@ public:
       Val.setInt(constant);
       assert(V && "Marking constant with NULL");
       Val.setPointer(V);
-    } else {
-      assert(getLatticeValue() == forcedconstant &&
-             "Cannot move from overdefined to constant!");
-      // Stay at forcedconstant if the constant is the same.
-      if (V == getConstant()) return false;
-
-      // Otherwise, we go to overdefined.  Assumptions made based on the
-      // forced value are possibly wrong.  Assuming this is another constant
-      // could expose a contradiction.
-      Val.setInt(overdefined);
     }
     return true;
   }
