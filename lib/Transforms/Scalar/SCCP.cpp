@@ -139,12 +139,6 @@ public:
       return dyn_cast<ConstantInt>(getConstant());
     return nullptr;
   }
-
-  void markForcedConstant(Constant *V) {
-    assert(isUnknown() && "Can't force a defined value!");
-    Val.setInt(forcedconstant);
-    Val.setPointer(V);
-  }
 };
 } // end anonymous namespace.
 
@@ -330,7 +324,7 @@ public:
   }
 
 private:
-  // pushToWorkList - Helper for markConstant/markForcedConstant
+  // pushToWorkList - Helper for markConstant
   void pushToWorkList(LatticeVal &IV, Value *V) {
     if (IV.isOverdefined())
       return OverdefinedInstWorkList.push_back(V);
@@ -351,15 +345,6 @@ private:
     assert(!V->getType()->isStructTy() && "structs should use mergeInValue");
     markConstant(ValueState[V], V, C);
   }
-
-  void markForcedConstant(Value *V, Constant *C) {
-    assert(!V->getType()->isStructTy() && "structs should use mergeInValue");
-    LatticeVal &IV = ValueState[V];
-    IV.markForcedConstant(C);
-    DEBUG(dbgs() << "markForcedConstant: " << *C << ": " << *V << '\n');
-    pushToWorkList(IV, V);
-  }
-
 
   // markOverdefined - Make a value be marked as "overdefined". If the
   // value is not already overdefined, add it to the overdefined instruction
