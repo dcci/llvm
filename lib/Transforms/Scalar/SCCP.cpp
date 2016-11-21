@@ -1439,6 +1439,18 @@ static bool runIPSCCP(Module &M, const DataLayout &DL,
 
       for (BasicBlock::iterator BI = BB->begin(), E = BB->end(); BI != E; ) {
         Instruction *Inst = &*BI++;
+
+        // Fix branches to undef -> branches to false.
+        if (auto *BrInst = dyn_cast<BranchInst>(Inst)) {
+          if (!BrInst->isConditional())
+            continue;
+          auto *C = dyn_cast<Constant>(BrInst->getCondition());
+          if (!C || !isa<UndefValue>(C))
+            continue;
+          BrInst->setCondition(ConstantInt::getFalse(BrInst->getContext()));
+          Solver.MarkBlockExecutable(BrInst->getSuccessor(1));
+        }
+
         if (Inst->getType()->isVoidTy())
           continue;
         if (tryToReplaceWithConstant(Solver, Inst)) {
