@@ -13,6 +13,7 @@ entry:
 
 ; CHECK-DAG: define i64 @fn2(
 ; CHECK: %[[CALL:.*]] = call i64 @fn1(i64 undef)
+; CHECK-NEXT: ret i64 undef
 
 define internal i64 @fn1(i64 %p1) {
 entry:
@@ -22,5 +23,4 @@ entry:
 }
 
 ; CHECK-DAG: define internal i64 @fn1(
-; CHECK: %[[SEL:.*]] = select i1 undef, i64 undef, i64 undef
-; CHECK: ret i64 %[[SEL]]
+; CHECK: ret i64 undef
