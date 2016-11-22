@@ -247,7 +247,8 @@ bool AsmPrinter::doInitialization(Module &M) {
 
   if (MAI->doesSupportDebugInformation()) {
     bool EmitCodeView = MMI->getModule()->getCodeViewFlag();
-    if (EmitCodeView && TM.getTargetTriple().isKnownWindowsMSVCEnvironment()) {
+    if (EmitCodeView && (TM.getTargetTriple().isKnownWindowsMSVCEnvironment() ||
+                         TM.getTargetTriple().isWindowsItaniumEnvironment())) {
       Handlers.push_back(HandlerInfo(new CodeViewDebug(this),
                                      DbgTimerName, DbgTimerDescription,
                                      CodeViewLineTablesGroupName,
@@ -344,7 +345,7 @@ void AsmPrinter::getNameWithPrefix(SmallVectorImpl<char> &Name,
 }
 
 MCSymbol *AsmPrinter::getSymbol(const GlobalValue *GV) const {
-  return TM.getSymbol(GV, getObjFileLowering().getMangler());
+  return TM.getSymbol(GV);
 }
 
 /// EmitGlobalVariable - Emit the specified global variable to the .s file.

@@ -6023,14 +6023,11 @@ static SDValue EltsFromConsecutiveLoads(EVT VT, ArrayRef<SDValue> Elts,
   return SDValue();
 }
 
-/// Attempt to use the vbroadcast instruction to generate a splat value for the
-/// following cases:
-/// 1. A splat BUILD_VECTOR which uses a single scalar load, or a constant.
-/// 2. A splat shuffle which uses a scalar_to_vector node which comes from
-/// a scalar load, or a constant.
+/// Attempt to use the vbroadcast instruction to generate a splat value for a
+/// splat BUILD_VECTOR which uses a single scalar load, or a constant.
 /// The VBROADCAST node is returned when a pattern is found,
 /// or SDValue() otherwise.
-static SDValue LowerVectorBroadcast(SDValue Op, const X86Subtarget &Subtarget,
+static SDValue LowerVectorBroadcast(BuildVectorSDNode *BVOp, const X86Subtarget &Subtarget,
                                     SelectionDAG &DAG) {
   // VBROADCAST requires AVX.
   // TODO: Splats could be generated for non-AVX CPUs using SSE
@@ -6038,79 +6035,27 @@ static SDValue LowerVectorBroadcast(SDValue Op, const X86Subtarget &Subtarget,
   if (!Subtarget.hasAVX())
     return SDValue();
 
-  MVT VT = Op.getSimpleValueType();
-  SDLoc dl(Op);
+  MVT VT = BVOp->getSimpleValueType(0);
+  SDLoc dl(BVOp);
 
   assert((VT.is128BitVector() || VT.is256BitVector() || VT.is512BitVector()) &&
          "Unsupported vector type for broadcast.");
 
-  SDValue Ld;
-  bool ConstSplatVal;
+  BitVector UndefElements;
+  SDValue Ld = BVOp->getSplatValue(&UndefElements);
 
-  switch (Op.getOpcode()) {
-    default:
-      // Unknown pattern found.
-      return SDValue();
+  // We need a splat of a single value to use broadcast, and it doesn't
+  // make any sense if the value is only in one element of the vector.
+  if (!Ld || (VT.getVectorNumElements() - UndefElements.count()) <= 1)
+    return SDValue();
 
-    case ISD::BUILD_VECTOR: {
-      auto *BVOp = cast<BuildVectorSDNode>(Op.getNode());
-      BitVector UndefElements;
-      SDValue Splat = BVOp->getSplatValue(&UndefElements);
+  bool ConstSplatVal =
+      (Ld.getOpcode() == ISD::Constant || Ld.getOpcode() == ISD::ConstantFP);
 
-      // We need a splat of a single value to use broadcast, and it doesn't
-      // make any sense if the value is only in one element of the vector.
-      if (!Splat || (VT.getVectorNumElements() - UndefElements.count()) <= 1)
-        return SDValue();
-
-      Ld = Splat;
-      ConstSplatVal = (Ld.getOpcode() == ISD::Constant ||
-                       Ld.getOpcode() == ISD::ConstantFP);
-
-      // Make sure that all of the users of a non-constant load are from the
-      // BUILD_VECTOR node.
-      if (!ConstSplatVal && !BVOp->isOnlyUserOf(Ld.getNode()))
-        return SDValue();
-      break;
-    }
-
-    case ISD::VECTOR_SHUFFLE: {
-      ShuffleVectorSDNode *SVOp = cast<ShuffleVectorSDNode>(Op);
-
-      // Shuffles must have a splat mask where the first element is
-      // broadcasted.
-      if ((!SVOp->isSplat()) || SVOp->getMaskElt(0) != 0)
-        return SDValue();
-
-      SDValue Sc = Op.getOperand(0);
-      if (Sc.getOpcode() != ISD::SCALAR_TO_VECTOR &&
-          Sc.getOpcode() != ISD::BUILD_VECTOR) {
-
-        if (!Subtarget.hasInt256())
-          return SDValue();
-
-        // Use the register form of the broadcast instruction available on AVX2.
-        if (VT.getSizeInBits() >= 256)
-          Sc = extract128BitVector(Sc, 0, DAG, dl);
-        return DAG.getNode(X86ISD::VBROADCAST, dl, VT, Sc);
-      }
-
-      Ld = Sc.getOperand(0);
-      ConstSplatVal = (Ld.getOpcode() == ISD::Constant ||
-                       Ld.getOpcode() == ISD::ConstantFP);
-
-      // The scalar_to_vector node and the suspected
-      // load node must have exactly one user.
-      // Constants may have multiple users.
-
-      // AVX-512 has register version of the broadcast
-      bool hasRegVer = Subtarget.hasAVX512() && VT.is512BitVector() &&
-                       Ld.getValueSizeInBits() >= 32;
-      if (!ConstSplatVal && ((!Sc.hasOneUse() || !Ld.hasOneUse()) &&
-          !hasRegVer))
-        return SDValue();
-      break;
-    }
-  }
+  // Make sure that all of the users of a non-constant load are from the
+  // BUILD_VECTOR node.
+  if (!ConstSplatVal && !BVOp->isOnlyUserOf(Ld.getNode()))
+    return SDValue();
 
   unsigned ScalarSize = Ld.getValueSizeInBits();
   bool IsGE256 = (VT.getSizeInBits() >= 256);
@@ -6787,17 +6732,18 @@ static SDValue LowerToHorizontalOp(const BuildVectorSDNode *BV,
 /// NOTE: Its not in our interest to start make a general purpose vectorizer
 /// from this, but enough scalar bit operations are created from the later
 /// legalization + scalarization stages to need basic support.
-static SDValue lowerBuildVectorToBitOp(SDValue Op, SelectionDAG &DAG) {
+static SDValue lowerBuildVectorToBitOp(BuildVectorSDNode *Op,
+                                       SelectionDAG &DAG) {
   SDLoc DL(Op);
-  MVT VT = Op.getSimpleValueType();
+  MVT VT = Op->getSimpleValueType(0);
   unsigned NumElems = VT.getVectorNumElements();
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
 
   // Check that all elements have the same opcode.
   // TODO: Should we allow UNDEFS and if so how many?
-  unsigned Opcode = Op.getOperand(0).getOpcode();
+  unsigned Opcode = Op->getOperand(0).getOpcode();
   for (unsigned i = 1; i < NumElems; ++i)
-    if (Opcode != Op.getOperand(i).getOpcode())
+    if (Opcode != Op->getOperand(i).getOpcode())
       return SDValue();
 
   // TODO: We may be able to add support for other Ops (ADD/SUB + shifts).
@@ -6881,9 +6827,9 @@ X86TargetLowering::LowerBUILD_VECTOR(SDValue Op, SelectionDAG &DAG) const {
     return AddSub;
   if (SDValue HorizontalOp = LowerToHorizontalOp(BV, Subtarget, DAG))
     return HorizontalOp;
-  if (SDValue Broadcast = LowerVectorBroadcast(Op, Subtarget, DAG))
+  if (SDValue Broadcast = LowerVectorBroadcast(BV, Subtarget, DAG))
     return Broadcast;
-  if (SDValue BitOp = lowerBuildVectorToBitOp(Op, DAG))
+  if (SDValue BitOp = lowerBuildVectorToBitOp(BV, DAG))
     return BitOp;
 
   unsigned EVTBits = ExtVT.getSizeInBits();
@@ -14664,8 +14610,8 @@ static SDValue truncateVectorCompareWithPACKSS(EVT DstVT, SDValue In,
                                                const SDLoc &DL,
                                                SelectionDAG &DAG,
                                                const X86Subtarget &Subtarget) {
-  // AVX512 has fast truncate.
-  if (Subtarget.hasAVX512())
+  // Requires SSE2 but AVX512 has fast truncate.
+  if (!Subtarget.hasSSE2() || Subtarget.hasAVX512())
     return SDValue();
 
   EVT SrcVT = In.getValueType();
@@ -26655,6 +26601,17 @@ static SDValue combineTargetShuffle(SDValue N, SelectionDAG &DAG,
     assert(Mask.size() == 4);
     break;
   case X86ISD::UNPCKL: {
+    auto Op0 = N.getOperand(0);
+    auto Op1 = N.getOperand(1);
+    unsigned Opcode0 = Op0.getOpcode();
+    unsigned Opcode1 = Op1.getOpcode();
+
+    // Combine X86ISD::UNPCKL with 2 X86ISD::FHADD inputs into a single
+    // X86ISD::FHADD. This is generated by UINT_TO_FP v2f64 scalarization.
+    // TODO: Add other horizontal operations as required.
+    if (VT == MVT::v2f64 && Opcode0 == Opcode1 && Opcode0 == X86ISD::FHADD)
+      return DAG.getNode(Opcode0, DL, VT, Op0.getOperand(0), Op1.getOperand(0));
+
     // Combine X86ISD::UNPCKL and ISD::VECTOR_SHUFFLE into X86ISD::UNPCKH, in
     // which X86ISD::UNPCKL has a ISD::UNDEF operand, and ISD::VECTOR_SHUFFLE
     // moves upper half elements into the lower half part. For example:
@@ -26672,9 +26629,7 @@ static SDValue combineTargetShuffle(SDValue N, SelectionDAG &DAG,
     if (!VT.is128BitVector())
       return SDValue();
 
-    auto Op0 = N.getOperand(0);
-    auto Op1 = N.getOperand(1);
-    if (Op0.isUndef() && Op1.getNode()->getOpcode() == ISD::VECTOR_SHUFFLE) {
+    if (Op0.isUndef() && Opcode1 == ISD::VECTOR_SHUFFLE) {
       ArrayRef<int> Mask = cast<ShuffleVectorSDNode>(Op1.getNode())->getMask();
 
       unsigned NumElts = VT.getVectorNumElements();
@@ -27772,6 +27727,58 @@ static SDValue combineSelectOfTwoConstants(SDNode *N, SelectionDAG &DAG) {
   return SDValue();
 }
 
+// If this is a bitcasted op that can be represented as another type, push the
+// the bitcast to the inputs. This allows more opportunities for pattern
+// matching masked instructions. This is called when we know that the operation
+// is used as one of the inputs of a vselect.
+static bool combineBitcastForMaskedOp(SDValue OrigOp, SelectionDAG &DAG,
+                                      TargetLowering::DAGCombinerInfo &DCI) {
+  // Make sure we have a bitcast.
+  if (OrigOp.getOpcode() != ISD::BITCAST)
+    return false;
+
+  SDValue Op = OrigOp.getOperand(0);
+
+  // If the operation is used by anything other than the bitcast, we shouldn't
+  // do this combine as that would replicate the operation.
+  if (!Op.hasOneUse())
+    return false;
+
+  MVT VT = OrigOp.getSimpleValueType();
+  MVT EltVT = VT.getVectorElementType();
+  SDLoc DL(Op.getNode());
+
+  switch (Op.getOpcode()) {
+  case X86ISD::PALIGNR:
+    // PALIGNR can be converted to VALIGND/Q for 128-bit vectors.
+    if (!VT.is128BitVector())
+      return false;
+    LLVM_FALLTHROUGH;
+  case X86ISD::VALIGN: {
+    if (EltVT != MVT::i32 && EltVT != MVT::i64)
+      return false;
+    uint64_t Imm = cast<ConstantSDNode>(Op.getOperand(2))->getZExtValue();
+    MVT OpEltVT = Op.getSimpleValueType().getVectorElementType();
+    unsigned ShiftAmt = Imm * OpEltVT.getSizeInBits();
+    unsigned EltSize = EltVT.getSizeInBits();
+    // Make sure we can represent the same shift with the new VT.
+    if ((ShiftAmt % EltSize) != 0)
+      return false;
+    Imm = ShiftAmt / EltSize;
+    SDValue Op0 = DAG.getBitcast(VT, Op.getOperand(0));
+    DCI.AddToWorklist(Op0.getNode());
+    SDValue Op1 = DAG.getBitcast(VT, Op.getOperand(1));
+    DCI.AddToWorklist(Op1.getNode());
+    DCI.CombineTo(OrigOp.getNode(),
+                  DAG.getNode(X86ISD::VALIGN, DL, VT, Op0, Op1,
+                              DAG.getConstant(Imm, DL, MVT::i8)));
+    return true;
+  }
+  }
+
+  return false;
+}
+
 /// Do target-specific dag combines on SELECT and VSELECT nodes.
 static SDValue combineSelect(SDNode *N, SelectionDAG &DAG,
                              TargetLowering::DAGCombinerInfo &DCI,
@@ -28131,6 +28138,17 @@ static SDValue combineSelect(SDNode *N, SelectionDAG &DAG,
                       TLO.New, N->getOperand(1), N->getOperand(2)));
       return SDValue();
     }
+  }
+
+  // Look for vselects with LHS/RHS being bitcasted from an operation that
+  // can be executed on another type. Push the bitcast to the inputs of
+  // the operation. This exposes opportunities for using masking instructions.
+  if (N->getOpcode() == ISD::VSELECT && !DCI.isBeforeLegalizeOps() &&
+      CondVT.getVectorElementType() == MVT::i1) {
+    if (combineBitcastForMaskedOp(LHS, DAG, DCI))
+      return SDValue(N, 0);
+    if (combineBitcastForMaskedOp(RHS, DAG, DCI))
+      return SDValue(N, 0);
   }
 
   return SDValue();
@@ -31020,22 +31038,20 @@ static SDValue combineVectorTruncation(SDNode *N, SelectionDAG &DAG,
     return SDValue();
 }
 
-/// This function transforms vector truncation of comparison results from
+/// This function transforms vector truncation of 'all or none' bits values.
 /// vXi16/vXi32/vXi64 to vXi8/vXi16/vXi32 into X86ISD::PACKSS operations.
-static SDValue combineVectorCompareTruncation(SDNode *N, SDLoc &DL,
-                                              SelectionDAG &DAG,
-                                              const X86Subtarget &Subtarget) {
-  // AVX512 has fast truncate.
-  if (Subtarget.hasAVX512())
+static SDValue combineVectorSignBitsTruncation(SDNode *N, SDLoc &DL,
+                                               SelectionDAG &DAG,
+                                               const X86Subtarget &Subtarget) {
+  // Requires SSE2 but AVX512 has fast truncate.
+  if (!Subtarget.hasSSE2() || Subtarget.hasAVX512())
     return SDValue();
 
   if (!N->getValueType(0).isVector() || !N->getValueType(0).isSimple())
     return SDValue();
 
-  // TODO: we should be able to support sources other than compares as long
-  // as we are saturating+packing zero/all bits only.
   SDValue In = N->getOperand(0);
-  if (In.getOpcode() != ISD::SETCC || !In.getValueType().isSimple())
+  if (!In.getValueType().isSimple())
     return SDValue();
 
   MVT VT = N->getValueType(0).getSimpleVT();
@@ -31044,9 +31060,11 @@ static SDValue combineVectorCompareTruncation(SDNode *N, SDLoc &DL,
   MVT InVT = In.getValueType().getSimpleVT();
   MVT InSVT = InVT.getScalarType();
 
-  assert(DAG.getTargetLoweringInfo().getBooleanContents(InVT) ==
-             TargetLoweringBase::ZeroOrNegativeOneBooleanContent &&
-         "Expected comparison result to be zero/all bits");
+  // Use PACKSS if the input is a splatted sign bit.
+  // e.g. Comparison result, sext_in_reg, etc.
+  unsigned NumSignBits = DAG.ComputeNumSignBits(In);
+  if (NumSignBits != InSVT.getSizeInBits())
+    return SDValue();
 
   // Check we have a truncation suited for PACKSS.
   if (!VT.is128BitVector() && !VT.is256BitVector())
@@ -31077,8 +31095,8 @@ static SDValue combineTruncate(SDNode *N, SelectionDAG &DAG,
       return DAG.getNode(X86ISD::MMX_MOVD2W, DL, MVT::i32, BCSrc);
   }
 
-  // Try to truncate vector comparison results with PACKSS.
-  if (SDValue V = combineVectorCompareTruncation(N, DL, DAG, Subtarget))
+  // Try to truncate extended sign bits with PACKSS.
+  if (SDValue V = combineVectorSignBitsTruncation(N, DL, DAG, Subtarget))
     return V;
 
   return combineVectorTruncation(N, DAG, Subtarget);

@@ -2843,10 +2843,14 @@ unsigned SelectionDAG::ComputeNumSignBits(SDValue Op, unsigned Depth) const {
     Tmp = ComputeNumSignBits(Op.getOperand(0), Depth+1);
     if (Tmp == 1) return 1;  // Early out.
     return std::min(Tmp, Tmp2)-1;
-  case ISD::TRUNCATE:
-    // FIXME: it's tricky to do anything useful for this, but it is an important
-    // case for targets like X86.
+  case ISD::TRUNCATE: {
+    // Check if the sign bits of source go down as far as the truncated value.
+    unsigned NumSrcBits = Op.getOperand(0).getScalarValueSizeInBits();
+    unsigned NumSrcSignBits = ComputeNumSignBits(Op.getOperand(0), Depth + 1);
+    if (NumSrcSignBits > (NumSrcBits - VTBits))
+      return NumSrcSignBits - (NumSrcBits - VTBits);
     break;
+  }
   case ISD::EXTRACT_ELEMENT: {
     const int KnownSign = ComputeNumSignBits(Op.getOperand(0), Depth+1);
     const int BitWidth = Op.getValueSizeInBits();
@@ -2874,6 +2878,13 @@ unsigned SelectionDAG::ComputeNumSignBits(SDValue Op, unsigned Depth) const {
       return ComputeNumSignBits(Op.getOperand(0), Depth+1);
     break;
   }
+  case ISD::CONCAT_VECTORS:
+    // Determine the minimum number of sign bits across all input vectors.
+    // Early out if the result is already 1.
+    Tmp = ComputeNumSignBits(Op.getOperand(0), Depth + 1);
+    for (unsigned i = 1, e = Op.getNumOperands(); (i < e) && (Tmp > 1); ++i)
+      Tmp = std::min(Tmp, ComputeNumSignBits(Op.getOperand(i), Depth + 1));
+    return Tmp;
   }
 
   // If we are looking at the loaded value of the SDNode.
