@@ -889,13 +889,17 @@ void SCCPSolver::visitBinaryOperator(Instruction &I) {
 
       if (I.getOpcode() == Instruction::And) {
         // X and 0 = 0
-        if (NonOverdefVal->getConstant()->isNullValue())
-          return markConstant(IV, &I, NonOverdefVal->getConstant());
+        // X and undef = 0
+        Constant *C = NonOverdefVal->getConstant();
+        if (C->isNullValue() || isa<UndefValue>(C))
+          return markConstant(IV, &I, Constant::getNullValue(I.getType()));
       } else {
         // X or -1 = -1
-        if (ConstantInt *CI = NonOverdefVal->getConstantInt())
-          if (CI->isAllOnesValue())
-            return markConstant(IV, &I, NonOverdefVal->getConstant());
+        // X or undef = -1
+        Constant *C = NonOverdefVal->getConstant();
+        Constant *CI = NonOverdefVal->getConstantInt();
+        if ((C && isa<UndefValue>(C)) || (CI && CI->isAllOnesValue()))
+          return markConstant(IV, &I, Constant::getAllOnesValue(I.getType()));
       }
     }
   }
