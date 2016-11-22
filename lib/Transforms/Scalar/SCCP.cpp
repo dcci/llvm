@@ -525,16 +525,6 @@ void SCCPSolver::getFeasibleSuccessors(TerminatorInst &TI,
 
     LatticeVal BCValue = getValueState(BI->getCondition());
 
-    // This is a branch on undef. We force the branch to go one way or the
-    // other to make the successor values live.  It doesn't really matter
-    // which way we force it.
-    if (isa<UndefValue>(BI->getCondition()) ||
-        (BCValue.isConstant() && isa<UndefValue>(BCValue.getConstant()))) {
-      BI->setCondition(ConstantInt::getFalse(BI->getContext()));
-      Succs[1] = true;
-      return;
-    }
-
     ConstantInt *CI = BCValue.getConstantInt();
     if (!CI) {
       // Overdefined condition variables, and branches on unfoldable constant
