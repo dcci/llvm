@@ -669,12 +669,19 @@ void SCCPSolver::visitPHINode(PHINode &PN) {
   // are overdefined, the PHI becomes overdefined as well.  If they are all
   // constant, and they agree with each other, the PHI becomes the identical
   // constant.  If they are constant and don't agree, the PHI is overdefined.
-  // If there are no executable operands, the PHI remains unknown.
-  //
+  // If all the operands are undefined, the PHI goes to overdefined.
   Constant *OperandVal = nullptr;
   for (unsigned i = 0, e = PN.getNumIncomingValues(); i != e; ++i) {
     LatticeVal IV = getValueState(PN.getIncomingValue(i));
     if (IV.isUnknown()) continue;  // Doesn't influence PHI node.
+
+    // 'undef' doesn't influence a phi.
+    // For example, we have:
+    // %patatino = phi i32* [ undef, %a ], [ null, %b ], [ null, %c ]
+    // We can fold %patatino to null as the other two phi values agree
+    // and 'undef' has no effect here.
+    if (IV.isConstant() && isa<UndefValue>(IV.getConstant()))
+      continue;
 
     if (!isEdgeFeasible(PN.getIncomingBlock(i), PN.getParent()))
       continue;
@@ -699,11 +706,12 @@ void SCCPSolver::visitPHINode(PHINode &PN) {
 
   // If we exited the loop, this means that the PHI node only has constant
   // arguments that agree with each other(and OperandVal is the constant) or
-  // OperandVal is null because there are no defined incoming arguments.  If
-  // this is the case, the PHI remains unknown.
-  //
+  // OperandVal is null because there are no defined incoming arguments.
+  // In the latter case, we send it to overdefined.
   if (OperandVal)
     markConstant(&PN, OperandVal);      // Acquire operand value
+  else
+    markOverdefined(&PN);
 }
 
 void SCCPSolver::visitReturnInst(ReturnInst &I) {
