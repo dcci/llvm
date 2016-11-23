@@ -551,6 +551,18 @@ void SCCPSolver::getFeasibleSuccessors(TerminatorInst &TI,
       return;
     }
     LatticeVal SCValue = getValueState(SI->getCondition());
+
+    // Handle branch on undef marking the first successor as live.
+    if (SCValue.isConstant()) {
+      Constant *C  = SCValue.getConstant();
+      assert(C && "C should be a constant");
+      if (isa<UndefValue>(C)) {
+        ConstantInt *CI = SI->case_begin().getCaseValue();
+        Succs[SI->findCaseValue(CI).getSuccessorIndex()] = true;
+        return;
+      }
+    }
+
     ConstantInt *CI = SCValue.getConstantInt();
 
     if (!CI) {   // Overdefined or unknown condition?
@@ -1451,6 +1463,17 @@ static bool runIPSCCP(Module &M, const DataLayout &DL,
             continue;
           BrInst->setCondition(ConstantInt::getFalse(BrInst->getContext()));
           Solver.MarkBlockExecutable(BrInst->getSuccessor(1));
+        }
+
+        // Fix switches on undef -> switch on the first constant.
+        if (auto *SI = dyn_cast<SwitchInst>(Inst)) {
+          if (!SI->getNumCases())
+            continue;
+          auto *C = dyn_cast<Constant>(SI->getCondition());
+          if (!C || !isa<UndefValue>(C))
+            continue;
+          SI->setCondition(SI->case_begin().getCaseValue());
+          Solver.MarkBlockExecutable(SI->case_begin().getCaseSuccessor());
         }
 
         if (Inst->getType()->isVoidTy())
