@@ -1250,17 +1250,17 @@ X86TargetLowering::X86TargetLowering(const X86TargetMachine &TM,
     setOperationAction(ISD::VSELECT,            MVT::v16i1, Expand);
     if (Subtarget.hasDQI()) {
       setOperationAction(ISD::SINT_TO_FP,       MVT::v8i64, Legal);
+      setOperationAction(ISD::SINT_TO_FP,       MVT::v4i64, Legal);
       setOperationAction(ISD::UINT_TO_FP,       MVT::v8i64, Legal);
+      setOperationAction(ISD::UINT_TO_FP,       MVT::v4i64, Legal);
       setOperationAction(ISD::FP_TO_SINT,       MVT::v8i64, Legal);
+      setOperationAction(ISD::FP_TO_SINT,       MVT::v4i64, Legal);
       setOperationAction(ISD::FP_TO_UINT,       MVT::v8i64, Legal);
+      setOperationAction(ISD::FP_TO_UINT,       MVT::v4i64, Legal);
       if (Subtarget.hasVLX()) {
-        setOperationAction(ISD::SINT_TO_FP,    MVT::v4i64, Legal);
         setOperationAction(ISD::SINT_TO_FP,    MVT::v2i64, Legal);
-        setOperationAction(ISD::UINT_TO_FP,    MVT::v4i64, Legal);
         setOperationAction(ISD::UINT_TO_FP,    MVT::v2i64, Legal);
-        setOperationAction(ISD::FP_TO_SINT,    MVT::v4i64, Legal);
         setOperationAction(ISD::FP_TO_SINT,    MVT::v2i64, Legal);
-        setOperationAction(ISD::FP_TO_UINT,    MVT::v4i64, Legal);
         setOperationAction(ISD::FP_TO_UINT,    MVT::v2i64, Legal);
       }
     }
@@ -7627,16 +7627,11 @@ static SDValue lowerVectorShuffleAsBitMask(const SDLoc &DL, MVT VT, SDValue V1,
                                            SDValue V2, ArrayRef<int> Mask,
                                            const SmallBitVector &Zeroable,
                                            SelectionDAG &DAG) {
+  assert(!VT.isFloatingPoint() && "Floating point types are not supported");
   MVT EltVT = VT.getVectorElementType();
-  int NumEltBits = EltVT.getSizeInBits();
-  MVT IntEltVT = MVT::getIntegerVT(NumEltBits);
-  SDValue Zero = DAG.getConstant(0, DL, IntEltVT);
-  SDValue AllOnes = DAG.getConstant(APInt::getAllOnesValue(NumEltBits), DL,
-                                    IntEltVT);
-  if (EltVT.isFloatingPoint()) {
-    Zero = DAG.getBitcast(EltVT, Zero);
-    AllOnes = DAG.getBitcast(EltVT, AllOnes);
-  }
+  SDValue Zero = DAG.getConstant(0, DL, EltVT);
+  SDValue AllOnes =
+      DAG.getConstant(APInt::getAllOnesValue(EltVT.getSizeInBits()), DL, EltVT);
   SmallVector<SDValue, 16> VMaskOps(Mask.size(), Zero);
   SDValue V;
   for (int i = 0, Size = Mask.size(); i < Size; ++i) {
@@ -7655,10 +7650,7 @@ static SDValue lowerVectorShuffleAsBitMask(const SDLoc &DL, MVT VT, SDValue V1,
     return SDValue(); // No non-zeroable elements!
 
   SDValue VMask = DAG.getBuildVector(VT, DL, VMaskOps);
-  V = DAG.getNode(VT.isFloatingPoint()
-                  ? (unsigned) X86ISD::FAND : (unsigned) ISD::AND,
-                  DL, VT, V, VMask);
-  return V;
+  return DAG.getNode(ISD::AND, DL, VT, V, VMask);
 }
 
 /// \brief Try to emit a blend instruction for a shuffle using bit math.
