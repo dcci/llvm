@@ -256,7 +256,7 @@ DwarfDebug::DwarfDebug(AsmPrinter *A, Module *M)
     UseAllLinkageNames = DwarfLinkageNames == AllLinkageNames;
 
   unsigned DwarfVersionNumber = Asm->TM.Options.MCOptions.DwarfVersion;
-  DwarfVersion = DwarfVersionNumber ? DwarfVersionNumber
+  unsigned DwarfVersion = DwarfVersionNumber ? DwarfVersionNumber
                                     : MMI->getModule()->getDwarfVersion();
   // Use dwarf 4 by default if nothing is requested.
   DwarfVersion = DwarfVersion ? DwarfVersion : dwarf::DWARF_VERSION;
@@ -437,9 +437,9 @@ DwarfDebug::constructDwarfCompileUnit(const DICompileUnit *DIUnit) {
   }
 
   if (useSplitDwarf())
-    NewCU.initSection(Asm->getObjFileLowering().getDwarfInfoDWOSection());
+    NewCU.setSection(Asm->getObjFileLowering().getDwarfInfoDWOSection());
   else
-    NewCU.initSection(Asm->getObjFileLowering().getDwarfInfoSection());
+    NewCU.setSection(Asm->getObjFileLowering().getDwarfInfoSection());
 
   if (DIUnit->getDWOId()) {
     // This CU is either a clang module DWO or a skeleton CU.
@@ -520,7 +520,7 @@ void DwarfDebug::finishVariableDefinitions() {
     // FIXME: Consider the time-space tradeoff of just storing the unit pointer
     // in the ConcreteVariables list, rather than looking it up again here.
     // DIE::getUnit isn't simple - it walks parent pointers, etc.
-    DwarfCompileUnit *Unit = lookupUnit(VariableDie->getUnit());
+    DwarfCompileUnit *Unit = CUDieMap.lookup(VariableDie->getUnitDie());
     assert(Unit);
     DbgVariable *AbsVar = getExistingAbstractVariable(
         InlinedVariable(Var->getVariable(), Var->getInlinedAt()));
@@ -726,10 +726,10 @@ void DwarfDebug::ensureAbstractVariableIsCreatedIfScoped(
     createAbstractVariable(Cleansed, Scope);
 }
 
-// Collect variable information from side table maintained by MMI.
-void DwarfDebug::collectVariableInfoFromMMITable(
+// Collect variable information from side table maintained by MF.
+void DwarfDebug::collectVariableInfoFromMFTable(
     DenseSet<InlinedVariable> &Processed) {
-  for (const auto &VI : MMI->getVariableDbgInfo()) {
+  for (const auto &VI : Asm->MF->getVariableDbgInfo()) {
     if (!VI.Var)
       continue;
     assert(VI.Var->isValidLocationForIntrinsic(VI.Loc) &&
@@ -939,7 +939,7 @@ void DwarfDebug::collectVariableInfo(DwarfCompileUnit &TheCU,
                                      const DISubprogram *SP,
                                      DenseSet<InlinedVariable> &Processed) {
   // Grab the variable info that was squirreled away in the MMI side-table.
-  collectVariableInfoFromMMITable(Processed);
+  collectVariableInfoFromMFTable(Processed);
 
   for (const auto &I : DbgValues) {
     InlinedVariable IV = I.first;
@@ -1197,7 +1197,7 @@ void DwarfDebug::recordSourceLine(unsigned Line, unsigned Col, const MDNode *S,
     Fn = Scope->getFilename();
     Dir = Scope->getDirectory();
     if (auto *LBF = dyn_cast<DILexicalBlockFile>(Scope))
-      if (DwarfVersion >= 4)
+      if (getDwarfVersion() >= 4)
         Discriminator = LBF->getDiscriminator();
 
     unsigned CUID = Asm->OutStreamer->getContext().getDwarfCompileUnitID();
@@ -1415,8 +1415,7 @@ static void emitDebugLocValue(const AsmPrinter &AP, const DIBasicType *BT,
                               const DebugLocEntry::Value &Value,
                               unsigned PieceOffsetInBits) {
   DIExpressionCursor ExprCursor(Value.getExpression());
-  DebugLocDwarfExpression DwarfExpr(AP.getDwarfDebug()->getDwarfVersion(),
-                                    Streamer);
+  DebugLocDwarfExpression DwarfExpr(AP.getDwarfVersion(), Streamer);
   // Regular entry.
   if (Value.isInt()) {
     if (BT && (BT->getEncoding() == dwarf::DW_ATE_signed ||
@@ -1467,8 +1466,7 @@ void DebugLocEntry::finalize(const AsmPrinter &AP,
       assert(Offset <= PieceOffset && "overlapping or duplicate pieces");
       if (Offset < PieceOffset) {
         // The DWARF spec seriously mandates pieces with no locations for gaps.
-        DebugLocDwarfExpression Expr(AP.getDwarfDebug()->getDwarfVersion(),
-                                     Streamer);
+        DebugLocDwarfExpression Expr(AP.getDwarfVersion(), Streamer);
         Expr.AddOpPiece(PieceOffset-Offset, 0);
         Offset += PieceOffset-Offset;
       }
@@ -1823,7 +1821,7 @@ DwarfCompileUnit &DwarfDebug::constructSkeletonCU(const DwarfCompileUnit &CU) {
   auto OwnedUnit = make_unique<DwarfCompileUnit>(
       CU.getUniqueID(), CU.getCUNode(), Asm, this, &SkeletonHolder);
   DwarfCompileUnit &NewCU = *OwnedUnit;
-  NewCU.initSection(Asm->getObjFileLowering().getDwarfInfoSection());
+  NewCU.setSection(Asm->getObjFileLowering().getDwarfInfoSection());
 
   NewCU.initStmtList();
 
@@ -1915,11 +1913,10 @@ void DwarfDebug::addDwarfTypeUnitType(DwarfCompileUnit &CU,
   Ins.first->second = Signature;
 
   if (useSplitDwarf())
-    NewTU.initSection(Asm->getObjFileLowering().getDwarfTypesDWOSection());
+    NewTU.setSection(Asm->getObjFileLowering().getDwarfTypesDWOSection());
   else {
     CU.applyStmtList(UnitDie);
-    NewTU.initSection(
-        Asm->getObjFileLowering().getDwarfTypesSection(Signature));
+    NewTU.setSection(Asm->getObjFileLowering().getDwarfTypesSection(Signature));
   }
 
   NewTU.setType(NewTU.createTypeDIE(CTy));
@@ -1982,4 +1979,8 @@ void DwarfDebug::addAccelType(StringRef Name, const DIE &Die, char Flags) {
   if (!useDwarfAccelTables())
     return;
   AccelTypes.AddName(InfoHolder.getStringPool().getEntry(*Asm, Name), &Die);
+}
+
+uint16_t DwarfDebug::getDwarfVersion() const {
+  return Asm->OutStreamer->getContext().getDwarfVersion();
 }

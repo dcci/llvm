@@ -60,12 +60,9 @@ define <2 x i64> @fptosi_2f64_to_2i64(<2 x double> %a) {
 ;
 ; AVX512DQ-LABEL: fptosi_2f64_to_2i64:
 ; AVX512DQ:       # BB#0:
-; AVX512DQ-NEXT:    vcvttsd2si %xmm0, %rax
-; AVX512DQ-NEXT:    vmovq %rax, %xmm1
-; AVX512DQ-NEXT:    vpermilpd {{.*#+}} xmm0 = xmm0[1,0]
-; AVX512DQ-NEXT:    vcvttsd2si %xmm0, %rax
-; AVX512DQ-NEXT:    vmovq %rax, %xmm0
-; AVX512DQ-NEXT:    vpunpcklqdq {{.*#+}} xmm0 = xmm1[0],xmm0[0]
+; AVX512DQ-NEXT:    # kill: %XMM0<def> %XMM0<kill> %ZMM0<def>
+; AVX512DQ-NEXT:    vcvttpd2qq %zmm0, %zmm0
+; AVX512DQ-NEXT:    # kill: %XMM0<def> %XMM0<kill> %ZMM0<kill>
 ; AVX512DQ-NEXT:    retq
 ;
 ; AVX512VLDQ-LABEL: fptosi_2f64_to_2i64:
@@ -334,12 +331,9 @@ define <2 x i64> @fptoui_2f64_to_2i64(<2 x double> %a) {
 ;
 ; AVX512DQ-LABEL: fptoui_2f64_to_2i64:
 ; AVX512DQ:       # BB#0:
-; AVX512DQ-NEXT:    vcvttsd2usi %xmm0, %rax
-; AVX512DQ-NEXT:    vmovq %rax, %xmm1
-; AVX512DQ-NEXT:    vpermilpd {{.*#+}} xmm0 = xmm0[1,0]
-; AVX512DQ-NEXT:    vcvttsd2usi %xmm0, %rax
-; AVX512DQ-NEXT:    vmovq %rax, %xmm0
-; AVX512DQ-NEXT:    vpunpcklqdq {{.*#+}} xmm0 = xmm1[0],xmm0[0]
+; AVX512DQ-NEXT:    # kill: %XMM0<def> %XMM0<kill> %ZMM0<def>
+; AVX512DQ-NEXT:    vcvttpd2uqq %zmm0, %zmm0
+; AVX512DQ-NEXT:    # kill: %XMM0<def> %XMM0<kill> %ZMM0<kill>
 ; AVX512DQ-NEXT:    retq
 ;
 ; AVX512VLDQ-LABEL: fptoui_2f64_to_2i64:
@@ -2429,8 +2423,8 @@ define <4 x i32> @fptosi_2f128_to_4i32(<2 x fp128> %a) nounwind {
 ; AVX512VL-NEXT:    movq %r14, %rsi
 ; AVX512VL-NEXT:    callq __fixtfdi
 ; AVX512VL-NEXT:    vmovq %rax, %xmm0
-; AVX512VL-NEXT:    vmovdqa64 (%rsp), %xmm1 # 16-byte Reload
-; AVX512VL-NEXT:    vpunpcklqdq {{.*#+}} xmm0 = xmm0[0],xmm1[0]
+; AVX512VL-NEXT:    vpunpcklqdq (%rsp), %xmm0, %xmm0 # 16-byte Folded Reload
+; AVX512VL-NEXT:    # xmm0 = xmm0[0],mem[0]
 ; AVX512VL-NEXT:    vpshufd {{.*#+}} xmm0 = xmm0[0,2,2,3]
 ; AVX512VL-NEXT:    vmovq {{.*#+}} xmm0 = xmm0[0],zero
 ; AVX512VL-NEXT:    addq $24, %rsp
@@ -2479,8 +2473,8 @@ define <4 x i32> @fptosi_2f128_to_4i32(<2 x fp128> %a) nounwind {
 ; AVX512VLDQ-NEXT:    movq %r14, %rsi
 ; AVX512VLDQ-NEXT:    callq __fixtfdi
 ; AVX512VLDQ-NEXT:    vmovq %rax, %xmm0
-; AVX512VLDQ-NEXT:    vmovdqa64 (%rsp), %xmm1 # 16-byte Reload
-; AVX512VLDQ-NEXT:    vpunpcklqdq {{.*#+}} xmm0 = xmm0[0],xmm1[0]
+; AVX512VLDQ-NEXT:    vpunpcklqdq (%rsp), %xmm0, %xmm0 # 16-byte Folded Reload
+; AVX512VLDQ-NEXT:    # xmm0 = xmm0[0],mem[0]
 ; AVX512VLDQ-NEXT:    vpshufd {{.*#+}} xmm0 = xmm0[0,2,2,3]
 ; AVX512VLDQ-NEXT:    vmovq {{.*#+}} xmm0 = xmm0[0],zero
 ; AVX512VLDQ-NEXT:    addq $24, %rsp

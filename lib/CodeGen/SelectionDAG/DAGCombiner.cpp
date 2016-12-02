@@ -326,7 +326,7 @@ namespace {
 
     SDValue visitFADDForFMACombine(SDNode *N);
     SDValue visitFSUBForFMACombine(SDNode *N);
-    SDValue visitFMULForFMACombine(SDNode *N);
+    SDValue visitFMULForFMADistributiveCombine(SDNode *N);
 
     SDValue XformToShuffleWithZero(SDNode *N);
     SDValue ReassociateOps(unsigned Opc, const SDLoc &DL, SDValue LHS,
@@ -341,6 +341,8 @@ namespace {
     SDValue SimplifySelectCC(const SDLoc &DL, SDValue N0, SDValue N1,
                              SDValue N2, SDValue N3, ISD::CondCode CC,
                              bool NotExtCompare = false);
+    SDValue foldSelectCCToShiftAnd(const SDLoc &DL, SDValue N0, SDValue N1,
+                                   SDValue N2, SDValue N3, ISD::CondCode CC);
     SDValue SimplifySetCC(EVT VT, SDValue N0, SDValue N1, ISD::CondCode Cond,
                           const SDLoc &DL, bool foldBooleans = true);
 
@@ -2374,8 +2376,8 @@ SDValue DAGCombiner::visitSDIV(SDNode *N) {
       return Op;
 
   // sdiv, srem -> sdivrem
-  // If the divisor is constant, then return DIVREM only if isIntDivCheap() is true.
-  // Otherwise, we break the simplification logic in visitREM().
+  // If the divisor is constant, then return DIVREM only if isIntDivCheap() is
+  // true.  Otherwise, we break the simplification logic in visitREM().
   if (!N1C || TLI.isIntDivCheap(N->getValueType(0), Attr))
     if (SDValue DivRem = useDivRem(N))
         return DivRem;
@@ -2439,8 +2441,8 @@ SDValue DAGCombiner::visitUDIV(SDNode *N) {
       return Op;
 
   // sdiv, srem -> sdivrem
-  // If the divisor is constant, then return DIVREM only if isIntDivCheap() is true.
-  // Otherwise, we break the simplification logic in visitREM().
+  // If the divisor is constant, then return DIVREM only if isIntDivCheap() is
+  // true.  Otherwise, we break the simplification logic in visitREM().
   if (!N1C || TLI.isIntDivCheap(N->getValueType(0), Attr))
     if (SDValue DivRem = useDivRem(N))
         return DivRem;
@@ -2776,7 +2778,7 @@ SDValue DAGCombiner::SimplifyBinOpWithSameOpcodeHands(SDNode *N) {
   assert(N0.getOpcode() == N1.getOpcode() && "Bad input!");
 
   // Bail early if none of these transforms apply.
-  if (N0.getNode()->getNumOperands() == 0) return SDValue();
+  if (N0.getNumOperands() == 0) return SDValue();
 
   // For each of OP in AND/OR/XOR:
   // fold (OP (zext x), (zext y)) -> (zext (OP x, y))
@@ -5774,6 +5776,10 @@ SDValue DAGCombiner::visitVSELECT(SDNode *N) {
   SDValue N2 = N->getOperand(2);
   SDLoc DL(N);
 
+  // fold (vselect C, X, X) -> X
+  if (N1 == N2)
+    return N1;
+
   // Canonicalize integer abs.
   // vselect (setg[te] X,  0),  X, -X ->
   // vselect (setgt    X, -1),  X, -X ->
@@ -6175,7 +6181,7 @@ SDValue DAGCombiner::visitSIGN_EXTEND(SDNode *N) {
     // fold (sext (truncate (load x))) -> (sext (smaller load x))
     // fold (sext (truncate (srl (load x), c))) -> (sext (smaller load (x+c/n)))
     if (SDValue NarrowLoad = ReduceLoadWidth(N0.getNode())) {
-      SDNode* oye = N0.getNode()->getOperand(0).getNode();
+      SDNode *oye = N0.getOperand(0).getNode();
       if (NarrowLoad.getNode() != N0.getNode()) {
         CombineTo(N0.getNode(), NarrowLoad);
         // CombineTo deleted the truncate, if needed, but not what's under it.
@@ -6472,7 +6478,7 @@ SDValue DAGCombiner::visitZERO_EXTEND(SDNode *N) {
   // fold (zext (truncate (srl (load x), c))) -> (zext (small load (x+c/n)))
   if (N0.getOpcode() == ISD::TRUNCATE) {
     if (SDValue NarrowLoad = ReduceLoadWidth(N0.getNode())) {
-      SDNode* oye = N0.getNode()->getOperand(0).getNode();
+      SDNode *oye = N0.getOperand(0).getNode();
       if (NarrowLoad.getNode() != N0.getNode()) {
         CombineTo(N0.getNode(), NarrowLoad);
         // CombineTo deleted the truncate, if needed, but not what's under it.
@@ -6487,7 +6493,7 @@ SDValue DAGCombiner::visitZERO_EXTEND(SDNode *N) {
     // fold (zext (truncate (load x))) -> (zext (smaller load x))
     // fold (zext (truncate (srl (load x), c))) -> (zext (smaller load (x+c/n)))
     if (SDValue NarrowLoad = ReduceLoadWidth(N0.getNode())) {
-      SDNode *oye = N0.getNode()->getOperand(0).getNode();
+      SDNode *oye = N0.getOperand(0).getNode();
       if (NarrowLoad.getNode() != N0.getNode()) {
         CombineTo(N0.getNode(), NarrowLoad);
         // CombineTo deleted the truncate, if needed, but not what's under it.
@@ -6747,7 +6753,7 @@ SDValue DAGCombiner::visitANY_EXTEND(SDNode *N) {
   // fold (aext (truncate (srl (load x), c))) -> (aext (small load (x+c/n)))
   if (N0.getOpcode() == ISD::TRUNCATE) {
     if (SDValue NarrowLoad = ReduceLoadWidth(N0.getNode())) {
-      SDNode* oye = N0.getNode()->getOperand(0).getNode();
+      SDNode *oye = N0.getOperand(0).getNode();
       if (NarrowLoad.getNode() != N0.getNode()) {
         CombineTo(N0.getNode(), NarrowLoad);
         // CombineTo deleted the truncate, if needed, but not what's under it.
@@ -8374,8 +8380,10 @@ SDValue DAGCombiner::visitFSUBForFMACombine(SDNode *N) {
   return SDValue();
 }
 
-/// Try to perform FMA combining on a given FMUL node.
-SDValue DAGCombiner::visitFMULForFMACombine(SDNode *N) {
+/// Try to perform FMA combining on a given FMUL node based on the distributive
+/// law x * (y + 1) = x * y + x and variants thereof (commuted versions,
+/// subtraction instead of addition).
+SDValue DAGCombiner::visitFMULForFMADistributiveCombine(SDNode *N) {
   SDValue N0 = N->getOperand(0);
   SDValue N1 = N->getOperand(1);
   EVT VT = N->getValueType(0);
@@ -8770,7 +8778,7 @@ SDValue DAGCombiner::visitFMUL(SDNode *N) {
   }
 
   // FMUL -> FMA combines:
-  if (SDValue Fused = visitFMULForFMACombine(N)) {
+  if (SDValue Fused = visitFMULForFMADistributiveCombine(N)) {
     AddToWorklist(Fused.getNode());
     return Fused;
   }
@@ -8879,7 +8887,7 @@ SDValue DAGCombiner::visitFMA(SDNode *N) {
 // Combine multiple FDIVs with the same divisor into multiple FMULs by the
 // reciprocal.
 // E.g., (a / D; b / D;) -> (recip = 1.0 / D; a * recip; b * recip)
-// Notice that this is not always beneficial. One reason is different target
+// Notice that this is not always beneficial. One reason is different targets
 // may have different costs for FDIV and FMUL, so sometimes the cost of two
 // FDIVs may be lower than the cost of one FDIV and two FMULs. Another reason
 // is the critical path is increased from "one FDIV" to "one FDIV + one FMUL".
@@ -9319,7 +9327,7 @@ SDValue DAGCombiner::visitFP_ROUND(SDNode *N) {
   // fold (fp_round (fp_round x)) -> (fp_round x)
   if (N0.getOpcode() == ISD::FP_ROUND) {
     const bool NIsTrunc = N->getConstantOperandVal(1) == 1;
-    const bool N0IsTrunc = N0.getNode()->getConstantOperandVal(1) == 1;
+    const bool N0IsTrunc = N0.getConstantOperandVal(1) == 1;
 
     // Skip this folding if it results in an fp_round from f80 to f16.
     //
@@ -9392,7 +9400,7 @@ SDValue DAGCombiner::visitFP_EXTEND(SDNode *N) {
   // Turn fp_extend(fp_round(X, 1)) -> x since the fp_round doesn't affect the
   // value of X.
   if (N0.getOpcode() == ISD::FP_ROUND
-      && N0.getNode()->getConstantOperandVal(1) == 1) {
+      && N0.getConstantOperandVal(1) == 1) {
     SDValue In = N0.getOperand(0);
     if (In.getValueType() == VT) return In;
     if (VT.bitsLT(In.getValueType()))
@@ -10265,22 +10273,11 @@ SDValue DAGCombiner::visitLOAD(SDNode *N) {
   // TODO: Handle TRUNCSTORE/LOADEXT
   if (OptLevel != CodeGenOpt::None &&
       ISD::isNormalLoad(N) && !LD->isVolatile()) {
-    // Either a direct store, or a store off of a TokenFactor can be
-    // forwarded.
-    if (Chain->getOpcode() == ISD::TokenFactor) {
-      for (const SDValue &ChainOp : Chain->op_values()) {
-        if (ISD::isNON_TRUNCStore(ChainOp.getNode())) {
-          StoreSDNode *PrevST = cast<StoreSDNode>(ChainOp);
-          if (PrevST->getBasePtr() == Ptr &&
-              PrevST->getValue().getValueType() == N->getValueType(0))
-            return CombineTo(N, PrevST->getOperand(1), Chain);
-        }
-      }
-    } else if (ISD::isNON_TRUNCStore(Chain.getNode())) {
+    if (ISD::isNON_TRUNCStore(Chain.getNode())) {
       StoreSDNode *PrevST = cast<StoreSDNode>(Chain);
       if (PrevST->getBasePtr() == Ptr &&
           PrevST->getValue().getValueType() == N->getValueType(0))
-        return CombineTo(N, PrevST->getOperand(1), Chain);
+      return CombineTo(N, Chain.getOperand(1), Chain);
     }
   }
 
@@ -14571,6 +14568,53 @@ bool DAGCombiner::SimplifySelectOps(SDNode *TheSelect, SDValue LHS,
   return false;
 }
 
+/// Try to fold an expression of the form (N0 cond N1) ? N2 : N3 to a shift and
+/// bitwise 'and'.
+SDValue DAGCombiner::foldSelectCCToShiftAnd(const SDLoc &DL, SDValue N0,
+                                            SDValue N1, SDValue N2, SDValue N3,
+                                            ISD::CondCode CC) {
+  // Check to see if we can perform the "gzip trick", transforming
+  // (select_cc setlt X, 0, A, 0) -> (and (sra X, size(X)-1), A)
+  EVT XType = N0.getValueType();
+  EVT AType = N2.getValueType();
+  if (!isNullConstant(N3) || CC != ISD::SETLT || !XType.bitsGE(AType))
+    return SDValue();
+
+  // (a < 0) ? b : 0
+  // (a < 1) ? a : 0
+  if (!(isNullConstant(N1) || (isOneConstant(N1) && N0 == N2)))
+    return SDValue();
+
+  // and (sra X, size(X)-1), A -> "and (srl X, C2), A" iff A is a single-bit
+  // constant.
+  EVT ShiftAmtTy = getShiftAmountTy(N0.getValueType());
+  auto *N2C = dyn_cast<ConstantSDNode>(N2.getNode());
+  if (N2C && ((N2C->getAPIntValue() & (N2C->getAPIntValue() - 1)) == 0)) {
+    unsigned ShCt = XType.getSizeInBits() - N2C->getAPIntValue().logBase2() - 1;
+    SDValue ShiftAmt = DAG.getConstant(ShCt, DL, ShiftAmtTy);
+    SDValue Shift = DAG.getNode(ISD::SRL, DL, XType, N0, ShiftAmt);
+    AddToWorklist(Shift.getNode());
+
+    if (XType.bitsGT(AType)) {
+      Shift = DAG.getNode(ISD::TRUNCATE, DL, AType, Shift);
+      AddToWorklist(Shift.getNode());
+    }
+
+    return DAG.getNode(ISD::AND, DL, AType, Shift, N2);
+  }
+
+  SDValue ShiftAmt = DAG.getConstant(XType.getSizeInBits() - 1, DL, ShiftAmtTy);
+  SDValue Shift = DAG.getNode(ISD::SRA, DL, XType, N0, ShiftAmt);
+  AddToWorklist(Shift.getNode());
+
+  if (XType.bitsGT(AType)) {
+    Shift = DAG.getNode(ISD::TRUNCATE, DL, AType, Shift);
+    AddToWorklist(Shift.getNode());
+  }
+
+  return DAG.getNode(ISD::AND, DL, AType, Shift, N2);
+}
+
 /// Simplify an expression of the form (N0 cond N1) ? N2 : N3
 /// where 'cond' is the comparison specified by CC.
 SDValue DAGCombiner::SimplifySelectCC(const SDLoc &DL, SDValue N0, SDValue N1,
@@ -14667,48 +14711,8 @@ SDValue DAGCombiner::SimplifySelectCC(const SDLoc &DL, SDValue N0, SDValue N1,
       }
     }
 
-  // Check to see if we can perform the "gzip trick", transforming
-  // (select_cc setlt X, 0, A, 0) -> (and (sra X, (sub size(X), 1), A)
-  if (isNullConstant(N3) && CC == ISD::SETLT &&
-      (isNullConstant(N1) ||                 // (a < 0) ? b : 0
-       (isOneConstant(N1) && N0 == N2))) {   // (a < 1) ? a : 0
-    EVT XType = N0.getValueType();
-    EVT AType = N2.getValueType();
-    if (XType.bitsGE(AType)) {
-      // and (sra X, size(X)-1, A) -> "and (srl X, C2), A" iff A is a
-      // single-bit constant.
-      if (N2C && ((N2C->getAPIntValue() & (N2C->getAPIntValue() - 1)) == 0)) {
-        unsigned ShCtV = N2C->getAPIntValue().logBase2();
-        ShCtV = XType.getSizeInBits() - ShCtV - 1;
-        SDValue ShCt = DAG.getConstant(ShCtV, SDLoc(N0),
-                                       getShiftAmountTy(N0.getValueType()));
-        SDValue Shift = DAG.getNode(ISD::SRL, SDLoc(N0),
-                                    XType, N0, ShCt);
-        AddToWorklist(Shift.getNode());
-
-        if (XType.bitsGT(AType)) {
-          Shift = DAG.getNode(ISD::TRUNCATE, DL, AType, Shift);
-          AddToWorklist(Shift.getNode());
-        }
-
-        return DAG.getNode(ISD::AND, DL, AType, Shift, N2);
-      }
-
-      SDValue Shift = DAG.getNode(ISD::SRA, SDLoc(N0),
-                                  XType, N0,
-                                  DAG.getConstant(XType.getSizeInBits() - 1,
-                                                  SDLoc(N0),
-                                         getShiftAmountTy(N0.getValueType())));
-      AddToWorklist(Shift.getNode());
-
-      if (XType.bitsGT(AType)) {
-        Shift = DAG.getNode(ISD::TRUNCATE, DL, AType, Shift);
-        AddToWorklist(Shift.getNode());
-      }
-
-      return DAG.getNode(ISD::AND, DL, AType, Shift, N2);
-    }
-  }
+  if (SDValue V = foldSelectCCToShiftAnd(DL, N0, N1, N2, N3, CC))
+    return V;
 
   // fold (select_cc seteq (and x, y), 0, 0, A) -> (and (shr (shl x)) A)
   // where y is has a single bit set.

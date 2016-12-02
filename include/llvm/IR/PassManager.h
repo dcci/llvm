@@ -281,13 +281,11 @@ public:
       PreservedAnalyses PassPA = Passes[Idx]->run(IR, AM, ExtraArgs...);
 
       // Update the analysis manager as each pass runs and potentially
-      // invalidates analyses. We also update the preserved set of analyses
-      // based on what analyses we have already handled the invalidation for
-      // here and don't need to invalidate when finished.
-      PassPA = AM.invalidate(IR, std::move(PassPA));
+      // invalidates analyses.
+      AM.invalidate(IR, PassPA);
 
-      // Finally, we intersect the final preserved analyses to compute the
-      // aggregate preserved set for this pass manager.
+      // Finally, we intersect the preserved analyses to compute the aggregate
+      // preserved set for this pass manager.
       PA.intersect(std::move(PassPA));
 
       // FIXME: Historically, the pass managers all called the LLVM context's
@@ -341,11 +339,109 @@ typedef PassManager<Function> FunctionPassManager;
 /// IR unit sufficies as its identity. It manages the cache for a unit of IR via
 /// the address of each unit of IR cached.
 template <typename IRUnitT, typename... ExtraArgTs> class AnalysisManager {
-  typedef detail::AnalysisResultConcept<IRUnitT> ResultConceptT;
-  typedef detail::AnalysisPassConcept<IRUnitT, ExtraArgTs...> PassConceptT;
+public:
+  class Invalidator;
+
+private:
+  // Now that we've defined our invalidator, we can build types for the concept
+  // types.
+  typedef detail::AnalysisResultConcept<IRUnitT, PreservedAnalyses, Invalidator>
+      ResultConceptT;
+  typedef detail::AnalysisPassConcept<IRUnitT, PreservedAnalyses, Invalidator,
+                                      ExtraArgTs...>
+      PassConceptT;
+
+  /// \brief List of function analysis pass IDs and associated concept pointers.
+  ///
+  /// Requires iterators to be valid across appending new entries and arbitrary
+  /// erases. Provides the analysis ID to enable finding iterators to a given entry
+  /// in maps below, and provides the storage for the actual result concept.
+  typedef std::list<std::pair<AnalysisKey *, std::unique_ptr<ResultConceptT>>>
+      AnalysisResultListT;
+
+  /// \brief Map type from IRUnitT pointer to our custom list type.
+  typedef DenseMap<IRUnitT *, AnalysisResultListT> AnalysisResultListMapT;
+
+  /// \brief Map type from a pair of analysis ID and IRUnitT pointer to an
+  /// iterator into a particular result list which is where the actual result
+  /// is stored.
+  typedef DenseMap<std::pair<AnalysisKey *, IRUnitT *>,
+                   typename AnalysisResultListT::iterator>
+      AnalysisResultMapT;
 
 public:
-  // Most public APIs are inherited from the CRTP base class.
+  /// API to communicate dependencies between analyses during invalidation.
+  ///
+  /// When an analysis result embeds handles to other analysis results, it
+  /// needs to be invalidated both when its own information isn't preserved and
+  /// if any of those embedded analysis results end up invalidated. We pass in
+  /// an \c Invalidator object from the analysis manager in order to let the
+  /// analysis results themselves define the dependency graph on the fly. This
+  /// avoids building an explicit data structure representation of the
+  /// dependencies between analysis results.
+  class Invalidator {
+  public:
+    /// Trigger the invalidation of some other analysis pass if not already
+    /// handled and return whether it will in fact be invalidated.
+    ///
+    /// This is expected to be called from within a given analysis result's \c
+    /// invalidate method to trigger a depth-first walk of all inter-analysis
+    /// dependencies. The same \p IR unit and \p PA passed to that result's \c
+    /// invalidate method should in turn be provided to this routine.
+    ///
+    /// The first time this is called for a given analysis pass, it will
+    /// trigger the corresponding result's \c invalidate method to be called.
+    /// Subsequent calls will use a cache of the results of that initial call.
+    /// It is an error to form cyclic dependencies between analysis results.
+    ///
+    /// This returns true if the given analysis pass's result is invalid and
+    /// any dependecies on it will become invalid as a result.
+    template <typename PassT>
+    bool invalidate(IRUnitT &IR, const PreservedAnalyses &PA) {
+      AnalysisKey *ID = PassT::ID();
+
+      // If we've already visited this pass, return true if it was invalidated
+      // and false otherwise.
+      auto IMapI = IsResultInvalidated.find(ID);
+      if (IMapI != IsResultInvalidated.end())
+        return IMapI->second;
+
+      // Otherwise look up the result object.
+      auto RI = Results.find({ID, &IR});
+      assert(RI != Results.end() &&
+             "Trying to invalidate a dependent result that isn't in the "
+             "manager's cache is always an error, likely due to a stale result "
+             "handle!");
+
+      typedef detail::AnalysisResultModel<IRUnitT, PassT,
+                                          typename PassT::Result,
+                                          PreservedAnalyses, Invalidator>
+          ResultModelT;
+      auto &ResultModel = static_cast<ResultModelT &>(*RI->second->second);
+
+      // Insert into the map whether the result should be invalidated and
+      // return that. Note that we cannot re-use IMapI and must do a fresh
+      // insert here as calling the invalidate routine could (recursively)
+      // insert things into the map making any iterator or reference invalid.
+      bool Inserted;
+      std::tie(IMapI, Inserted) = IsResultInvalidated.insert(
+          {ID, ResultModel.invalidate(IR, PA, *this)});
+      (void)Inserted;
+      assert(Inserted && "Should not have already inserted this ID, likely "
+                         "indicates a dependency cycle!");
+      return IMapI->second;
+    }
+
+  private:
+    friend class AnalysisManager;
+
+    Invalidator(SmallDenseMap<AnalysisKey *, bool, 8> &IsResultInvalidated,
+                const AnalysisResultMapT &Results)
+        : IsResultInvalidated(IsResultInvalidated), Results(Results) {}
+
+    SmallDenseMap<AnalysisKey *, bool, 8> &IsResultInvalidated;
+    const AnalysisResultMapT &Results;
+  };
 
   /// \brief Construct an empty analysis manager.
   ///
@@ -407,7 +503,8 @@ public:
            "This analysis pass was not registered prior to being queried");
     ResultConceptT &ResultConcept =
         getResultImpl(PassT::ID(), IR, ExtraArgs...);
-    typedef detail::AnalysisResultModel<IRUnitT, PassT, typename PassT::Result>
+    typedef detail::AnalysisResultModel<IRUnitT, PassT, typename PassT::Result,
+                                        PreservedAnalyses, Invalidator>
         ResultModelT;
     return static_cast<ResultModelT &>(ResultConcept).Result;
   }
@@ -426,7 +523,8 @@ public:
     if (!ResultConcept)
       return nullptr;
 
-    typedef detail::AnalysisResultModel<IRUnitT, PassT, typename PassT::Result>
+    typedef detail::AnalysisResultModel<IRUnitT, PassT, typename PassT::Result,
+                                        PreservedAnalyses, Invalidator>
         ResultModelT;
     return &static_cast<ResultModelT *>(ResultConcept)->Result;
   }
@@ -451,7 +549,9 @@ public:
   /// away.
   template <typename PassBuilderT> bool registerPass(PassBuilderT PassBuilder) {
     typedef decltype(PassBuilder()) PassT;
-    typedef detail::AnalysisPassModel<IRUnitT, PassT, ExtraArgTs...> PassModelT;
+    typedef detail::AnalysisPassModel<IRUnitT, PassT, PreservedAnalyses,
+                                      Invalidator, ExtraArgTs...>
+        PassModelT;
 
     auto &PassPtr = AnalysisPasses[PassT::ID()];
     if (PassPtr)
@@ -476,52 +576,65 @@ public:
   ///
   /// Walk through all of the analyses pertaining to this unit of IR and
   /// invalidate them unless they are preserved by the PreservedAnalyses set.
-  /// We accept the PreservedAnalyses set by value and update it with each
-  /// analyis pass which has been successfully invalidated and thus can be
-  /// preserved going forward. The updated set is returned.
-  PreservedAnalyses invalidate(IRUnitT &IR, PreservedAnalyses PA) {
+  void invalidate(IRUnitT &IR, const PreservedAnalyses &PA) {
     // Short circuit for common cases of all analyses being preserved.
     if (PA.areAllPreserved() || PA.preserved<AllAnalysesOn<IRUnitT>>())
-      return PA;
+      return;
 
     if (DebugLogging)
       dbgs() << "Invalidating all non-preserved analyses for: " << IR.getName()
              << "\n";
 
-    // Clear all the invalidated results associated specifically with this
-    // function.
-    SmallVector<AnalysisKey *, 8> InvalidatedIDs;
+    // Track whether each pass's result is invalidated. Memoize the results
+    // using the IsResultInvalidated map.
+    SmallDenseMap<AnalysisKey *, bool, 8> IsResultInvalidated;
+    Invalidator Inv(IsResultInvalidated, AnalysisResults);
     AnalysisResultListT &ResultsList = AnalysisResultLists[&IR];
-    for (typename AnalysisResultListT::iterator I = ResultsList.begin(),
-                                                E = ResultsList.end();
-         I != E;) {
+    for (auto &AnalysisResultPair : ResultsList) {
+      // This is basically the same thing as Invalidator::invalidate, but we
+      // can't call it here because we're operating on the type-erased result.
+      // Moreover if we instead called invalidate() directly, it would do an
+      // unnecessary look up in ResultsList.
+      AnalysisKey *ID = AnalysisResultPair.first;
+      auto &Result = *AnalysisResultPair.second;
+
+      auto IMapI = IsResultInvalidated.find(ID);
+      if (IMapI != IsResultInvalidated.end())
+        // This result was already handled via the Invalidator.
+        continue;
+
+      // Try to invalidate the result, giving it the Invalidator so it can
+      // recursively query for any dependencies it has and record the result.
+      // Note that we cannot re-use 'IMapI' here or pre-insert the ID as the
+      // invalidate method may insert things into the map as well, invalidating
+      // any iterator or pointer.
+      bool Inserted =
+          IsResultInvalidated.insert({ID, Result.invalidate(IR, PA, Inv)})
+              .second;
+      (void)Inserted;
+      assert(Inserted && "Should never have already inserted this ID, likely "
+                         "indicates a cycle!");
+    }
+
+    // Now erase the results that were marked above as invalidated.
+    for (auto I = ResultsList.begin(), E = ResultsList.end(); I != E;) {
       AnalysisKey *ID = I->first;
-
-      // Pass the invalidation down to the pass itself to see if it thinks it is
-      // necessary. The analysis pass can return false if no action on the part
-      // of the analysis manager is required for this invalidation event.
-      if (I->second->invalidate(IR, PA)) {
-        if (DebugLogging)
-          dbgs() << "Invalidating analysis: " << this->lookupPass(ID).name()
-                 << "\n";
-
-        InvalidatedIDs.push_back(I->first);
-        I = ResultsList.erase(I);
-      } else {
+      if (!IsResultInvalidated.lookup(ID)) {
         ++I;
+        continue;
       }
 
-      // After handling each pass, we mark it as preserved. Once we've
-      // invalidated any stale results, the rest of the system is allowed to
-      // start preserving this analysis again.
-      PA.preserve(ID);
+      if (DebugLogging)
+        dbgs() << "Invalidating analysis: " << this->lookupPass(ID).name()
+               << "\n";
+
+      I = ResultsList.erase(I);
+      AnalysisResults.erase({ID, &IR});
     }
-    while (!InvalidatedIDs.empty())
-      AnalysisResults.erase(std::make_pair(InvalidatedIDs.pop_back_val(), &IR));
     if (ResultsList.empty())
       AnalysisResultLists.erase(&IR);
 
-    return PA;
+    return;
   }
 
 private:
@@ -596,29 +709,11 @@ private:
   /// \brief Collection of module analysis passes, indexed by ID.
   AnalysisPassMapT AnalysisPasses;
 
-  /// \brief List of function analysis pass IDs and associated concept pointers.
-  ///
-  /// Requires iterators to be valid across appending new entries and arbitrary
-  /// erases. Provides both the pass ID and concept pointer such that it is
-  /// half of a bijection and provides storage for the actual result concept.
-  typedef std::list<std::pair<
-      AnalysisKey *, std::unique_ptr<detail::AnalysisResultConcept<IRUnitT>>>>
-      AnalysisResultListT;
-
-  /// \brief Map type from function pointer to our custom list type.
-  typedef DenseMap<IRUnitT *, AnalysisResultListT> AnalysisResultListMapT;
-
   /// \brief Map from function to a list of function analysis results.
   ///
   /// Provides linear time removal of all analysis results for a function and
   /// the ultimate storage for a particular cached analysis result.
   AnalysisResultListMapT AnalysisResultLists;
-
-  /// \brief Map type from a pair of analysis ID and function pointer to an
-  /// iterator into a particular result list.
-  typedef DenseMap<std::pair<AnalysisKey *, IRUnitT *>,
-                   typename AnalysisResultListT::iterator>
-      AnalysisResultMapT;
 
   /// \brief Map from an analysis ID and function to a particular cached
   /// analysis result.
@@ -693,7 +788,9 @@ public:
     /// Regardless of whether this analysis is marked as preserved, all of the
     /// analyses in the \c FunctionAnalysisManager are potentially invalidated
     /// based on the set of preserved analyses.
-    bool invalidate(IRUnitT &IR, const PreservedAnalyses &PA) {
+    bool invalidate(
+        IRUnitT &IR, const PreservedAnalyses &PA,
+        typename AnalysisManager<IRUnitT, ExtraArgTs...>::Invalidator &) {
       // If this proxy isn't marked as preserved, then we can't even invalidate
       // individual function analyses, there may be an invalid set of Function
       // objects in the cache making it impossible to incrementally preserve
@@ -768,7 +865,11 @@ public:
     const AnalysisManagerT &getManager() const { return *AM; }
 
     /// \brief Handle invalidation by ignoring it, this pass is immutable.
-    bool invalidate(IRUnitT &, const PreservedAnalyses &) { return false; }
+    bool invalidate(
+        IRUnitT &, const PreservedAnalyses &,
+        typename AnalysisManager<IRUnitT, ExtraArgTs...>::Invalidator &) {
+      return false;
+    }
 
   private:
     const AnalysisManagerT *AM;
@@ -846,20 +947,19 @@ public:
 
       // We know that the function pass couldn't have invalidated any other
       // function's analyses (that's the contract of a function pass), so
-      // directly handle the function analysis manager's invalidation here and
-      // update our preserved set to reflect that these have already been
-      // handled.
-      PassPA = FAM.invalidate(F, std::move(PassPA));
+      // directly handle the function analysis manager's invalidation here.
+      FAM.invalidate(F, PassPA);
 
       // Then intersect the preserved set so that invalidation of module
       // analyses will eventually occur when the module pass completes.
       PA.intersect(std::move(PassPA));
     }
 
-    // By definition we preserve the proxy. This precludes *any* invalidation
-    // of function analyses by the proxy, but that's OK because we've taken
-    // care to invalidate analyses in the function analysis manager
-    // incrementally above.
+    // By definition we preserve the proxy. We also preserve all analyses on
+    // Function units. This precludes *any* invalidation of function analyses
+    // by the proxy, but that's OK because we've taken care to invalidate
+    // analyses in the function analysis manager incrementally above.
+    PA.preserve<AllAnalysesOn<Function>>();
     PA.preserve<FunctionAnalysisManagerModuleProxy>();
     return PA;
   }
