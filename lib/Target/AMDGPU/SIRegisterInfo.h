@@ -22,6 +22,7 @@ namespace llvm {
 
 class SISubtarget;
 class MachineRegisterInfo;
+class SIMachineFunctionInfo;
 
 class SIRegisterInfo final : public AMDGPURegisterInfo {
 private:
@@ -55,6 +56,8 @@ public:
     const MachineFunction &MF) const override;
   bool requiresVirtualBaseRegisters(const MachineFunction &Fn) const override;
   bool trackLivenessAfterRegAlloc(const MachineFunction &MF) const override;
+
+  int64_t getMUBUFInstrOffset(const MachineInstr *MI) const;
 
   int64_t getFrameIndexInstrOffset(const MachineInstr *MI,
                                    int Idx) const override;
@@ -196,7 +199,8 @@ public:
   unsigned getNumAddressableSGPRs(const SISubtarget &ST) const;
 
   /// \returns Number of reserved SGPRs supported by the subtarget.
-  unsigned getNumReservedSGPRs(const SISubtarget &ST) const;
+  unsigned getNumReservedSGPRs(const SISubtarget &ST,
+                               const SIMachineFunctionInfo &MFI) const;
 
   /// \returns Minimum number of SGPRs that meets given number of waves per
   /// execution unit requirement for given subtarget.
@@ -204,7 +208,8 @@ public:
 
   /// \returns Maximum number of SGPRs that meets given number of waves per
   /// execution unit requirement for given subtarget.
-  unsigned getMaxNumSGPRs(const SISubtarget &ST, unsigned WavesPerEU) const;
+  unsigned getMaxNumSGPRs(const SISubtarget &ST, unsigned WavesPerEU,
+                          bool Addressable) const;
 
   /// \returns Maximum number of SGPRs that meets number of waves per execution
   /// unit requirement for function \p MF, or number of SGPRs explicitly
