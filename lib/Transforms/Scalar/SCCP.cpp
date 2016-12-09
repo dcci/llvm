@@ -908,12 +908,10 @@ void SCCPSolver::visitBinaryOperator(Instruction &I) {
           I.getOpcode() == Instruction::Mul) {
         // X and 0 = 0
         // X and undef = 0
+        // X * 0 = 0
         Constant *C = NonOverdefVal->getConstant();
         if (C->isNullValue() || isa<UndefValue>(C))
           return markConstant(IV, &I, Constant::getNullValue(I.getType()));
-        // X * 0 = 0
-        if (C->isNullValue())
-          return markConstant(IV, &I, NonOverdefVal->getConstant());
       } else {
         // X or -1 = -1
         // X or undef = -1
