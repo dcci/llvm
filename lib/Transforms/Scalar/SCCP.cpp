@@ -717,9 +717,8 @@ void SCCPSolver::visitPHINode(PHINode &PN) {
   // OperandVal is null because there are no defined incoming arguments.
   // In the latter case, we send it to overdefined.
   if (OperandVal)
-    markConstant(&PN, OperandVal);      // Acquire operand value
-  else
-    markOverdefined(&PN);
+    return markConstant(&PN, OperandVal);      // Acquire operand value
+  return markOverdefined(&PN);
 }
 
 void SCCPSolver::visitReturnInst(ReturnInst &I) {
