@@ -306,7 +306,7 @@ public:
   }
 
 private:
-  // pushToWorkList - Helper for markConstant
+  // pushToWorkList - Helper for markConstant/markOverdefined
   void pushToWorkList(LatticeVal &IV, Value *V) {
     if (IV.isOverdefined())
       return OverdefinedInstWorkList.push_back(V);
@@ -340,7 +340,7 @@ private:
           else
             dbgs() << *V << '\n');
     // Only instructions go on the work list
-    OverdefinedInstWorkList.push_back(V);
+    pushToWorkList(IV, V);
   }
 
   void mergeInValue(LatticeVal &IV, Value *V, LatticeVal MergeWithV) {

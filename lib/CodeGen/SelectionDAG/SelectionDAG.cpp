@@ -2186,7 +2186,29 @@ void SelectionDAG::computeKnownBits(SDValue Op, APInt &KnownZero,
       }
     }
 
-    // TODO - support ((SubBitWidth % BitWidth) == 0) when it becomes useful.
+    // Bitcast 'large element' scalar/vector to 'small element' vector.
+    if ((SubBitWidth % BitWidth) == 0) {
+      assert(Op.getValueType().isVector() && "Expected bitcast to vector");
+
+      // Collect known bits for the (smaller) output by collecting the known
+      // bits from the overlapping larger input elements and extracting the
+      // sub sections we actually care about.
+      unsigned SubScale = SubBitWidth / BitWidth;
+      APInt SubDemandedElts(NumElts / SubScale, 0);
+      for (unsigned i = 0; i != NumElts; ++i)
+        if (DemandedElts[i])
+          SubDemandedElts.setBit(i / SubScale);
+
+      computeKnownBits(N0, KnownZero2, KnownOne2, SubDemandedElts, Depth + 1);
+
+      KnownZero = KnownOne = APInt::getAllOnesValue(BitWidth);
+      for (unsigned i = 0; i != NumElts; ++i)
+        if (DemandedElts[i]) {
+          unsigned Offset = (i % SubScale) * BitWidth;
+          KnownOne &= KnownOne2.lshr(Offset).trunc(BitWidth);
+          KnownZero &= KnownZero2.lshr(Offset).trunc(BitWidth);
+        }
+    }
     break;
   }
   case ISD::AND:
@@ -2955,6 +2977,8 @@ unsigned SelectionDAG::ComputeNumSignBits(SDValue Op, unsigned Depth) const {
       return ComputeNumSignBits(Op.getOperand(0), Depth+1);
     break;
   }
+  case ISD::EXTRACT_SUBVECTOR:
+    return ComputeNumSignBits(Op.getOperand(0), Depth + 1);
   case ISD::CONCAT_VECTORS:
     // Determine the minimum number of sign bits across all input vectors.
     // Early out if the result is already 1.
