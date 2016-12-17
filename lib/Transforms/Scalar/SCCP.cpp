@@ -503,7 +503,7 @@ private:
 
   void visitInstruction(Instruction &I) {
     // If a new instruction is added to LLVM that we don't handle.
-    dbgs() << "SCCP: Don't know how to handle: " << I << '\n';
+    DEBUG(dbgs() << "SCCP: Don't know how to handle: " << I << '\n');
     markAnythingOverdefined(&I);   // Just in case
   }
 };
