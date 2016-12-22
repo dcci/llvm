@@ -24,8 +24,8 @@ entry:
 }
 
 ; CHECK-LABEL: define void @fn2(
-; CHECK: call i32 @fn1(i32 undef)
+; CHECK: call i32 @fn1(i32 %0)
 
 ; CHECK-LABEL: define internal i32 @fn1(
-; CHECK:%[[COND:.*]] = select i1 undef, i32 undef, i32 undef
+; CHECK:%[[COND:.*]] = select i1 %tobool, i32 %p1, i32 %p1
 ; CHECK: ret i32 %[[COND]]
