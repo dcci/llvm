@@ -23,6 +23,7 @@
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/CodeGen/MachineValueType.h"
+#include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCExpr.h"
 #include "llvm/MC/MCInst.h"
@@ -45,6 +46,8 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/SMLoc.h"
 #include "llvm/Support/TargetRegistry.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/MathExtras.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
@@ -678,6 +681,7 @@ private:
   bool ParseDirectiveMajorMinor(uint32_t &Major, uint32_t &Minor);
   bool ParseDirectiveHSACodeObjectVersion();
   bool ParseDirectiveHSACodeObjectISA();
+  bool ParseDirectiveRuntimeMetadata();
   bool ParseAMDKernelCodeTValue(StringRef ID, amd_kernel_code_t &Header);
   bool ParseDirectiveAMDKernelCodeT();
   bool ParseSectionDirectiveHSAText();
@@ -851,9 +855,6 @@ public:
   AMDGPUOperand::Ptr defaultSMRDOffset8() const;
   AMDGPUOperand::Ptr defaultSMRDOffset20() const;
   AMDGPUOperand::Ptr defaultSMRDLiteralOffset() const;
-  AMDGPUOperand::Ptr defaultExpTgt() const;
-  AMDGPUOperand::Ptr defaultExpCompr() const;
-  AMDGPUOperand::Ptr defaultExpVM() const;
 
   OperandMatchResultTy parseOModOperand(OperandVector &Operands);
 
@@ -1566,8 +1567,8 @@ unsigned AMDGPUAsmParser::checkTargetMatchPredicate(MCInst &Inst) {
       getForcedEncodingSize() != 64)
     return Match_PreferE32;
 
-  if (Inst.getOpcode() == AMDGPU::V_MAC_F32_sdwa ||
-      Inst.getOpcode() == AMDGPU::V_MAC_F16_sdwa) {
+  if (Inst.getOpcode() == AMDGPU::V_MAC_F32_sdwa_vi ||
+      Inst.getOpcode() == AMDGPU::V_MAC_F16_sdwa_vi) {
     // v_mac_f32/16 allow only dst_sel == DWORD;
     auto OpNum =
         AMDGPU::getNamedOperandIdx(Inst.getOpcode(), AMDGPU::OpName::dst_sel);
@@ -1747,6 +1748,46 @@ bool AMDGPUAsmParser::ParseDirectiveHSACodeObjectISA() {
   return false;
 }
 
+bool AMDGPUAsmParser::ParseDirectiveRuntimeMetadata() {
+  std::string Metadata;
+  raw_string_ostream MS(Metadata);
+
+  getLexer().setSkipSpace(false);
+
+  bool FoundEnd = false;
+  while (!getLexer().is(AsmToken::Eof)) {
+    while (getLexer().is(AsmToken::Space)) {
+      MS << ' ';
+      Lex();
+    }
+
+    if (getLexer().is(AsmToken::Identifier)) {
+      StringRef ID = getLexer().getTok().getIdentifier();
+      if (ID == ".end_amdgpu_runtime_metadata") {
+        Lex();
+        FoundEnd = true;
+        break;
+      }
+    }
+
+    MS << Parser.parseStringToEndOfStatement()
+       << getContext().getAsmInfo()->getSeparatorString();
+
+    Parser.eatToEndOfStatement();
+  }
+
+  getLexer().setSkipSpace(true);
+
+  if (getLexer().is(AsmToken::Eof) && !FoundEnd)
+    return TokError("expected directive .end_amdgpu_runtime_metadata not found");
+
+  MS.flush();
+
+  getTargetStreamer().EmitRuntimeMetadata(Metadata);
+
+  return false;
+}
+
 bool AMDGPUAsmParser::ParseAMDKernelCodeTValue(StringRef ID,
                                                amd_kernel_code_t &Header) {
   SmallString<40> ErrStr;
@@ -1852,6 +1893,9 @@ bool AMDGPUAsmParser::ParseDirective(AsmToken DirectiveID) {
 
   if (IDVal == ".hsa_code_object_isa")
     return ParseDirectiveHSACodeObjectISA();
+
+  if (IDVal == ".amdgpu_runtime_metadata")
+    return ParseDirectiveRuntimeMetadata();
 
   if (IDVal == ".amd_kernel_code_t")
     return ParseDirectiveAMDKernelCodeT();
@@ -2903,18 +2947,6 @@ AMDGPUOperand::Ptr AMDGPUAsmParser::defaultLWE() const {
   return AMDGPUOperand::CreateImm(this, 0, SMLoc(), AMDGPUOperand::ImmTyLWE);
 }
 
-AMDGPUOperand::Ptr AMDGPUAsmParser::defaultExpTgt() const {
-  return AMDGPUOperand::CreateImm(this, 0, SMLoc(), AMDGPUOperand::ImmTyExpTgt);
-}
-
-AMDGPUOperand::Ptr AMDGPUAsmParser::defaultExpCompr() const {
-  return AMDGPUOperand::CreateImm(this, 0, SMLoc(), AMDGPUOperand::ImmTyExpCompr);
-}
-
-AMDGPUOperand::Ptr AMDGPUAsmParser::defaultExpVM() const {
-  return AMDGPUOperand::CreateImm(this, 0, SMLoc(), AMDGPUOperand::ImmTyExpVM);
-}
-
 //===----------------------------------------------------------------------===//
 // smrd
 //===----------------------------------------------------------------------===//
@@ -3413,8 +3445,8 @@ void AMDGPUAsmParser::cvtSDWA(MCInst &Inst, const OperandVector &Operands,
 
   addOptionalImmOperand(Inst, Operands, OptionalIdx, AMDGPUOperand::ImmTyClampSI, 0);
 
-  if (Inst.getOpcode() != AMDGPU::V_NOP_sdwa) {
-    // V_NOP_sdwa has no optional sdwa arguments
+  if (Inst.getOpcode() != AMDGPU::V_NOP_sdwa_vi) {
+    // V_NOP_sdwa_vi has no optional sdwa arguments
     switch (BasicInstType) {
     case SIInstrFlags::VOP1:
       addOptionalImmOperand(Inst, Operands, OptionalIdx, AMDGPUOperand::ImmTySdwaDstSel, 6);
@@ -3441,8 +3473,8 @@ void AMDGPUAsmParser::cvtSDWA(MCInst &Inst, const OperandVector &Operands,
 
   // special case v_mac_{f16, f32}:
   // it has src2 register operand that is tied to dst operand
-  if (Inst.getOpcode() == AMDGPU::V_MAC_F32_sdwa ||
-      Inst.getOpcode() == AMDGPU::V_MAC_F16_sdwa)  {
+  if (Inst.getOpcode() == AMDGPU::V_MAC_F32_sdwa_vi ||
+      Inst.getOpcode() == AMDGPU::V_MAC_F16_sdwa_vi)  {
     auto it = Inst.begin();
     std::advance(
         it, AMDGPU::getNamedOperandIdx(Inst.getOpcode(), AMDGPU::OpName::src2));

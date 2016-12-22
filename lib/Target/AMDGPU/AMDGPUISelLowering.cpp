@@ -498,7 +498,8 @@ bool AMDGPUTargetLowering::isSelectSupported(SelectSupportKind SelType) const {
 // FIXME: Why are we reporting vectors of FP immediates as legal?
 bool AMDGPUTargetLowering::isFPImmLegal(const APFloat &Imm, EVT VT) const {
   EVT ScalarVT = VT.getScalarType();
-  return (ScalarVT == MVT::f32 || ScalarVT == MVT::f64);
+  return (ScalarVT == MVT::f32 || ScalarVT == MVT::f64 ||
+         (ScalarVT == MVT::f16 && Subtarget->has16BitInsts()));
 }
 
 // We don't want to shrink f64 / f32 constants.
@@ -3037,6 +3038,8 @@ const char* AMDGPUTargetLowering::getTargetNodeName(unsigned Opcode) const {
   NODE_NAME_CASE(ATOMIC_CMP_SWAP)
   NODE_NAME_CASE(ATOMIC_INC)
   NODE_NAME_CASE(ATOMIC_DEC)
+  NODE_NAME_CASE(BUFFER_LOAD)
+  NODE_NAME_CASE(BUFFER_LOAD_FORMAT)
   case AMDGPUISD::LAST_AMDGPU_ISD_NUMBER: break;
   }
   return nullptr;

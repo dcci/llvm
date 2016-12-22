@@ -1827,7 +1827,6 @@ static void writeDIGlobalVariable(raw_ostream &Out, const DIGlobalVariable *N,
   Printer.printMetadata("type", N->getRawType());
   Printer.printBool("isLocal", N->isLocalToUnit());
   Printer.printBool("isDefinition", N->isDefinition());
-  Printer.printMetadata("expr", N->getExpr());
   Printer.printMetadata("declaration", N->getRawStaticDataMemberDeclaration());
   Printer.printInt("align", N->getAlignInBits());
   Out << ")";
@@ -1867,6 +1866,18 @@ static void writeDIExpression(raw_ostream &Out, const DIExpression *N,
     for (const auto &I : N->getElements())
       Out << FS << I;
   }
+  Out << ")";
+}
+
+static void writeDIGlobalVariableExpression(raw_ostream &Out,
+                                            const DIGlobalVariableExpression *N,
+                                            TypePrinting *TypePrinter,
+                                            SlotTracker *Machine,
+                                            const Module *Context) {
+  Out << "!DIGlobalVariableExpression(";
+  MDFieldPrinter Printer(Out, TypePrinter, Machine, Context);
+  Printer.printMetadata("var", N->getVariable());
+  Printer.printMetadata("expr", N->getExpression());
   Out << ")";
 }
 
@@ -2992,7 +3003,7 @@ void AssemblyWriter::printInstruction(const Instruction &I) {
     }
 
     Operand = CI->getCalledValue();
-    FunctionType *FTy = cast<FunctionType>(CI->getFunctionType());
+    FunctionType *FTy = CI->getFunctionType();
     Type *RetTy = FTy->getReturnType();
     const AttributeSet &PAL = CI->getAttributes();
 
@@ -3029,7 +3040,7 @@ void AssemblyWriter::printInstruction(const Instruction &I) {
 
   } else if (const InvokeInst *II = dyn_cast<InvokeInst>(&I)) {
     Operand = II->getCalledValue();
-    FunctionType *FTy = cast<FunctionType>(II->getFunctionType());
+    FunctionType *FTy = II->getFunctionType();
     Type *RetTy = FTy->getReturnType();
     const AttributeSet &PAL = II->getAttributes();
 

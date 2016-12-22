@@ -580,7 +580,6 @@ void Verifier::visitGlobalVariable(const GlobalVariable &GV) {
            "Global variable initializer type does not match global "
            "variable type!",
            &GV);
-
     // If the global has common linkage, it must have a zero initializer and
     // cannot be constant.
     if (GV.hasCommonLinkage()) {
@@ -645,6 +644,16 @@ void Verifier::visitGlobalVariable(const GlobalVariable &GV) {
              (GV.isDeclaration() && GV.hasExternalLinkage()) ||
              GV.hasAvailableExternallyLinkage(),
          "Global is marked as dllimport, but not external", &GV);
+
+  // Visit any debug info attachments.
+  SmallVector<MDNode *, 1> MDs;
+  GV.getMetadata(LLVMContext::MD_dbg, MDs);
+  for (auto *MD : MDs) {
+    if (auto *GVE = dyn_cast<DIGlobalVariableExpression>(MD))
+      visitDIGlobalVariableExpression(*GVE);
+    else
+      AssertDI(false, "!dbg attachment of global variable must be a DIGlobalVariableExpression");
+  }
 
   if (!GV.hasInitializer()) {
     visitGlobalValue(GV);
@@ -988,8 +997,8 @@ void Verifier::visitDICompileUnit(const DICompileUnit &N) {
   if (auto *Array = N.getRawGlobalVariables()) {
     AssertDI(isa<MDTuple>(Array), "invalid global variable list", &N, Array);
     for (Metadata *Op : N.getGlobalVariables()->operands()) {
-      AssertDI(Op && isa<DIGlobalVariable>(Op), "invalid global variable ref",
-               &N, Op);
+      AssertDI(Op && (isa<DIGlobalVariableExpression>(Op)),
+               "invalid global variable ref", &N, Op);
     }
   }
   if (auto *Array = N.getRawImportedEntities()) {
@@ -1132,8 +1141,6 @@ void Verifier::visitDIGlobalVariable(const DIGlobalVariable &N) {
 
   AssertDI(N.getTag() == dwarf::DW_TAG_variable, "invalid tag", &N);
   AssertDI(!N.getName().empty(), "missing global variable name", &N);
-  if (auto *V = N.getRawExpr())
-    AssertDI(isa<DIExpression>(V), "invalid expression location", &N, V);
   if (auto *Member = N.getRawStaticDataMemberDeclaration()) {
     AssertDI(isa<DIDerivedType>(Member),
              "invalid static data member declaration", &N, Member);
@@ -1151,6 +1158,15 @@ void Verifier::visitDILocalVariable(const DILocalVariable &N) {
 
 void Verifier::visitDIExpression(const DIExpression &N) {
   AssertDI(N.isValid(), "invalid expression", &N);
+}
+
+void Verifier::visitDIGlobalVariableExpression(
+    const DIGlobalVariableExpression &GVE) {
+  AssertDI(GVE.getVariable(), "missing variable");
+  if (auto *Var = GVE.getVariable())
+    visitDIGlobalVariable(*Var);
+  if (auto *Expr = GVE.getExpression())
+    visitDIExpression(*Expr);
 }
 
 void Verifier::visitDIObjCProperty(const DIObjCProperty &N) {
@@ -4328,7 +4344,8 @@ void Verifier::verifyFragmentExpression(const DbgInfoIntrinsic &I) {
     return;
 
   // Nothing to do if this isn't a bit piece expression.
-  if (!E->isFragment())
+  auto Fragment = E->getFragmentInfo();
+  if (!Fragment)
     return;
 
   // The frontend helps out GDB by emitting the members of local anonymous
@@ -4346,8 +4363,8 @@ void Verifier::verifyFragmentExpression(const DbgInfoIntrinsic &I) {
   if (!VarSize)
     return;
 
-  unsigned FragSize = E->getFragmentSizeInBits();
-  unsigned FragOffset = E->getFragmentOffsetInBits();
+  unsigned FragSize = Fragment->SizeInBits;
+  unsigned FragOffset = Fragment->OffsetInBits;
   AssertDI(FragSize + FragOffset <= VarSize,
          "fragment is larger than or outside of variable", &I, V, E);
   AssertDI(FragSize != VarSize, "fragment covers entire variable", &I, V, E);
