@@ -349,11 +349,11 @@ MemoryDependenceResults::getInvariantGroupPointerDependency(LoadInst *LI,
   if (!InvariantGroupMD)
     return MemDepResult::getUnknown();
 
-  MemDepResult Result = MemDepResult::getUnknown();
   SmallSet<Value *, 14> Seen;
   // Queue to process all pointers that are equivalent to load operand.
   SmallVector<Value *, 8> LoadOperandsQueue;
   LoadOperandsQueue.push_back(LoadOperand);
+  Seen.insert(LoadOperand);
   while (!LoadOperandsQueue.empty()) {
     Value *Ptr = LoadOperandsQueue.pop_back_val();
     if (isa<GlobalValue>(Ptr))
@@ -384,7 +384,7 @@ MemoryDependenceResults::getInvariantGroupPointerDependency(LoadInst *LI,
         return MemDepResult::getDef(U);
     }
   }
-  return Result;
+  return MemDepResult::getUnknown();
 }
 
 MemDepResult MemoryDependenceResults::getSimplePointerDependencyFrom(
@@ -1681,6 +1681,24 @@ void MemoryDependenceWrapperPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<DominatorTreeWrapperPass>();
   AU.addRequiredTransitive<AAResultsWrapperPass>();
   AU.addRequiredTransitive<TargetLibraryInfoWrapperPass>();
+}
+
+bool MemoryDependenceResults::invalidate(Function &F, const PreservedAnalyses &PA,
+                               FunctionAnalysisManager::Invalidator &Inv) {
+  // Check whether our analysis is preserved.
+  auto PAC = PA.getChecker<MemoryDependenceAnalysis>();
+  if (!PAC.preserved() && !PAC.preservedSet<AllAnalysesOn<Function>>())
+    // If not, give up now.
+    return true;
+
+  // Check whether the analyses we depend on became invalid for any reason.
+  if (Inv.invalidate<AAManager>(F, PA) ||
+      Inv.invalidate<AssumptionAnalysis>(F, PA) ||
+      Inv.invalidate<DominatorTreeAnalysis>(F, PA))
+    return true;
+
+  // Otherwise this analysis result remains valid.
+  return false;
 }
 
 unsigned MemoryDependenceResults::getDefaultBlockScanLimit() const {
