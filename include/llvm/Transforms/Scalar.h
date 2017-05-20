@@ -32,6 +32,12 @@ class TargetMachine;
 
 //===----------------------------------------------------------------------===//
 //
+// BackPropagation - Propagate informations from uses to defs.
+//
+FunctionPass *createBackPropagationPass();
+
+//===----------------------------------------------------------------------===//
+//
 // ConstantPropagation - A worklist driven constant propagation pass
 //
 FunctionPass *createConstantPropagationPass();
