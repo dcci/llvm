@@ -283,6 +283,25 @@ inverse_post_order_ext(const T &G, SetType &S) {
 //   }
 // }
 //
+template <class GraphT, class GT = GraphTraits<GraphT>>
+class PostOrderTraversal {
+  using NodeRef = typename GT::NodeRef;
+
+  std::vector<NodeRef> Blocks; // Block list in normal PO order
+
+  void Initialize(NodeRef BB) {
+    std::copy(po_begin(BB), po_end(BB), std::back_inserter(Blocks));
+  }
+
+public:
+  using postorder_iterator = typename std::vector<NodeRef>::iterator;
+
+  PostOrderTraversal(GraphT G) { Initialize(GT::getEntryNode(G)); }
+
+  // Because we want a reverse post order, use reverse iterators from the vector
+  postorder_iterator begin() { return Blocks.begin(); }
+  postorder_iterator end() { return Blocks.end(); }
+};
 
 template<class GraphT, class GT = GraphTraits<GraphT>>
 class ReversePostOrderTraversal {
