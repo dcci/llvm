@@ -17,6 +17,7 @@
 #include "llvm/IR/Instructions.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Transforms/Scalar.h"
+#include "llvm/Transforms/Utils/Local.h"
 
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/DenseMap.h"
@@ -26,6 +27,7 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/ADT/PostOrderIterator.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SparseBitVector.h"
@@ -70,16 +72,38 @@ public:
   PropagatedInfo(bool Optimistic = false) : IgnoreSign(Optimistic) {}
 
   bool canUseInfo() { return IgnoreSign; }
+
+  inline bool operator==(const PropagatedInfo &RHS) const {
+    return IgnoreSign == RHS.IgnoreSign;
+  }
+  inline bool operator!=(const PropagatedInfo &RHS) const {
+    return !(*this == RHS);
+  }
 };
 
 class BackPropagationImpl {
   Function &F;
-  SmallPtrSet<BasicBlock *, 8> VisitedBlocks;
-  DenseSet<Instruction *> CandidateSet;
 
-  void process(BasicBlock *);
+  // List of Visited blocks in the first post-order traversal of
+  // the function. We use it to identify unprocessed PHI nodes.
+  // FIXME: should this be a BitVector?
+  SmallPtrSet<BasicBlock *, 8> VisitedBlocks;
+
+  // Keeps the mapping between Instruction and propagation info.
+  DenseMap<Instruction *, PropagatedInfo *> InstructionToInfo;
+
+  // Worklist of instruction for processing.
+  SmallSetVector<Instruction *, 16> WorkList;
+
+  // List of "interesting" DEFs + propagation info sorted in post-order.
+  SmallVector<std::pair<Instruction *, PropagatedInfo *>, 16> InstructionsPO;
+
+  // Bump pointer allocator to allocate propagation info.
+  BumpPtrAllocator PIAlloc;
+
   void processInstruction(Instruction &);
   void processUse(Use &, PropagatedInfo &);
+  void reprocessInputs(Instruction &I);
 
 public:
   BackPropagationImpl(Function &F) : F(F){};
@@ -101,6 +125,12 @@ void BackPropagationImpl::processUse(Use &U, PropagatedInfo &PI) {
       break;
     }
   }
+}
+
+void BackPropagationImpl::reprocessInputs(Instruction &I) {
+  for (Use &U : I.uses())
+    if (auto *UI = dyn_cast<Instruction>(U.get()))
+      WorkList.insert(UI);
 }
 
 void BackPropagationImpl::processInstruction(Instruction &I) {
@@ -135,44 +165,99 @@ void BackPropagationImpl::processInstruction(Instruction &I) {
     }
   }
 
-  if (!Interesting)
-    return;
-
-  if (CandidateSet.insert(&I).second) {
-    // This is the first time we see this DEF.
-    // XXX: insert in the interesting postorder set.
-  }
-  // OK, we found a good candidate for propagation.
-}
-
-void BackPropagationImpl::process(BasicBlock *BB) {
-  for (auto &I : reverse(*BB)) {
-    if (isa<PHINode>(I)) {
-      processInstruction(I);
+  if (!Interesting) {
+    // The information we found is not interesting for propagation.
+    // If we has something already in the map, we need to remove it,
+    // and reprocess all the uses.
+    if (InstructionToInfo.count(&I)) {
+      DEBUG(dbgs() << "Removing PropagatedInfo for: " << I << "\n");
+      InstructionToInfo.erase(&I);
+      reprocessInputs(I);
       return;
     }
-    processInstruction(I);
+
+    // Even if the value wasn't in the map, and this is a PHI, we
+    // need to reprocess as we optimistically ignored values carried
+    // by backedges.
+    if (isa<PHINode>(&I))
+      reprocessInputs(I);
+    return;
+  }
+
+  if (!InstructionToInfo.count(&I)) {
+    // This is the first time we see this DEF.
+    // XXX: insert in the interesting postorder set.
+    auto *InfoPtr = new (PIAlloc) PropagatedInfo(true /* Optimistic */);
+    InstructionToInfo[&I] = InfoPtr;
+    InstructionsPO.push_back({&I, InfoPtr});
+
+    // If this is a PHINode, we need to reprocess backedge uses,
+    // as we ignored them in the first place and our optimistic
+    // hypothesis could be wrong.
+    if (isa<PHINode>(I))
+      reprocessInputs(I);
+  } else {
+    // We could've found that our information is still useful
+    // but differs from the one we had before. This means we've
+    // been too optimistic so a refinement is needed.
+    PropagatedInfo *OldPI = InstructionToInfo[&I];
+    if (*OldPI != PI) {
+      DEBUG(dbgs() << "Updating PropagatedInfo for: " << I << "\n");
+      *OldPI = PI;
+    }
   }
 }
 
 bool BackPropagationImpl::runBackProp() {
+  bool Changed = false;
   PostOrderTraversal<Function *> POT(&F);
 
-  // Debug.
+#ifndef NDEBUG
   for (auto &BB : POT) {
     DEBUG(dbgs() << "Dumping BB: "
                  << "\n");
     DEBUG(dbgs() << BB << "\n");
   }
+#endif
 
+  // Step 1: Walk the function in post-order, and walk each
+  // BasicBlock in the reverse direction (last-to-first instruction).
+  // Optimistically ignore values carried by backedges in PHI(s).
   for (auto &BB : POT) {
-    process(BB);
+    for (auto &I : reverse(*BB))
+      processInstruction(I);
 
     // Mark this block as processed.
     VisitedBlocks.insert(BB);
   }
 
-  return false;
+  // Step 2: Refine our hyphotesis until we hit a maximal fixpoint.
+  while (!WorkList.empty()) {
+    Instruction *I = WorkList.pop_back_val();
+    DEBUG(dbgs() << "Processing instruction: " << *I << "\n");
+    processInstruction(*I);
+  }
+
+  // Step 3: Walk the "potentially" interesting values in reverse post
+  // order, filtering those that are not interesting anymore, and propagate
+  // informations USE(s)->DEF(s).
+  // FIXME: I wanted to use `make_filter_range` but that returns an
+  // unidirectional iterator so I can't walk it the other way around.
+  for (auto &Info : reverse(InstructionsPO)) {
+    if (Info.second->canUseInfo())
+      continue;
+  }
+
+  // Step 4: Another post order walk, to remove now dead instructions.
+  for (auto &Info : InstructionsPO) {
+    Instruction *I = Info.first;
+    if (isInstructionTriviallyDead(I)) {
+      I->eraseFromParent();
+      Changed = true;
+    }
+  }
+
+  return Changed;
 }
 
 class BackPropagationPass : public FunctionPass {
