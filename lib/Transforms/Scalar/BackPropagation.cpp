@@ -211,14 +211,6 @@ bool BackPropagationImpl::runBackProp() {
   bool Changed = false;
   PostOrderTraversal<Function *> POT(&F);
 
-#ifndef NDEBUG
-  for (auto &BB : POT) {
-    DEBUG(dbgs() << "Dumping BB: "
-                 << "\n");
-    DEBUG(dbgs() << BB << "\n");
-  }
-#endif
-
   // Step 1: Walk the function in post-order, and walk each
   // BasicBlock in the reverse direction (last-to-first instruction).
   // Optimistically ignore values carried by backedges in PHI(s).
