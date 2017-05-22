@@ -186,7 +186,6 @@ void BackPropagationImpl::processInstruction(Instruction &I) {
 
   if (!InstructionToInfo.count(&I)) {
     // This is the first time we see this DEF.
-    // XXX: insert in the interesting postorder set.
     auto *InfoPtr = new (PIAlloc) PropagatedInfo(true /* Optimistic */);
     InstructionToInfo[&I] = InfoPtr;
     InstructionsPO.push_back({&I, InfoPtr});
