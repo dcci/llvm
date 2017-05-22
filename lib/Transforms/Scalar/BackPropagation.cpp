@@ -219,10 +219,11 @@ bool BackPropagationImpl::optimizeInstruction(Instruction *I, PropagatedInfo *PI
   case Intrinsic::fabs:
     if (PI->IgnoreSign) {
       I->replaceAllUsesWith(I->getOperand(0));
+      return true;
     }
     break;
   }
-  llvm_unreachable("Unhandled instruction!");
+  return false;
 }
 
 bool BackPropagationImpl::runBackProp() {
@@ -253,7 +254,7 @@ bool BackPropagationImpl::runBackProp() {
   // FIXME: I wanted to use `make_filter_range` but that returns an
   // unidirectional iterator so I can't walk it the other way around.
   for (auto &Info : reverse(InstructionsPO)) {
-    if (Info.second->canUseInfo())
+    if (!Info.second->canUseInfo())
       continue;
     Changed |= optimizeInstruction(Info.first, Info.second);
   }
