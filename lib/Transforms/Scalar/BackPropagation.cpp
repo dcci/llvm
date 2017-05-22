@@ -101,6 +101,7 @@ class BackPropagationImpl {
   // Bump pointer allocator to allocate propagation info.
   BumpPtrAllocator PIAlloc;
 
+  bool optimizeInstruction(Instruction *, PropagatedInfo *PI);
   void processInstruction(Instruction &);
   void processUse(Use &, PropagatedInfo &);
   void reprocessInputs(Instruction &I);
@@ -207,6 +208,23 @@ void BackPropagationImpl::processInstruction(Instruction &I) {
   }
 }
 
+bool BackPropagationImpl::optimizeInstruction(Instruction *I, PropagatedInfo *PI) {
+  auto *II = dyn_cast<IntrinsicInst>(I);
+  if (!II)
+    return false;
+
+  switch (II->getIntrinsicID()) {
+  default:
+    return false;
+  case Intrinsic::fabs:
+    if (PI->IgnoreSign) {
+      I->replaceAllUsesWith(I->getOperand(0));
+    }
+    break;
+  }
+  llvm_unreachable("Unhandled instruction!");
+}
+
 bool BackPropagationImpl::runBackProp() {
   bool Changed = false;
   PostOrderTraversal<Function *> POT(&F);
@@ -237,6 +255,7 @@ bool BackPropagationImpl::runBackProp() {
   for (auto &Info : reverse(InstructionsPO)) {
     if (Info.second->canUseInfo())
       continue;
+    Changed |= optimizeInstruction(Info.first, Info.second);
   }
 
   // Step 4: Another post order walk, to remove now dead instructions.
