@@ -274,6 +274,8 @@ public:
   /// should be rerun.
   bool ResolvedUndefsIn(Function &F);
 
+  bool callItANight(Function &F);
+
   bool isBlockExecutable(BasicBlock *BB) const {
     return BBExecutable.count(BB);
   }
@@ -824,7 +826,8 @@ void SCCPSolver::visitCastInst(CastInst &I) {
     Constant *C = ConstantFoldCastOperand(I.getOpcode(), OpSt.getConstant(),
                                           I.getType(), DL);
     if (isa<UndefValue>(C))
-      return;
+      return markOverdefined(&I);
+
     // Propagate constant value
     markConstant(&I, C);
   }
@@ -932,7 +935,7 @@ void SCCPSolver::visitBinaryOperator(Instruction &I) {
                                     V2State.getConstant());
     // X op Y -> undef.
     if (isa<UndefValue>(C))
-      return;
+      return markOverdefined(&I);
     return markConstant(IV, &I, C);
   }
 
@@ -995,7 +998,7 @@ void SCCPSolver::visitCmpInst(CmpInst &I) {
     Constant *C = ConstantExpr::getCompare(
         I.getPredicate(), V1State.getConstant(), V2State.getConstant());
     if (isa<UndefValue>(C))
-      return;
+      return markOverdefined(&I);
     return markConstant(IV, &I, C);
   }
 
@@ -1032,7 +1035,7 @@ void SCCPSolver::visitGetElementPtrInst(GetElementPtrInst &I) {
   Constant *C =
       ConstantExpr::getGetElementPtr(I.getSourceElementType(), Ptr, Indices);
   if (isa<UndefValue>(C))
-      return;
+    return markOverdefined(&I);
   markConstant(&I, C);
 }
 
@@ -1093,7 +1096,7 @@ void SCCPSolver::visitLoadInst(LoadInst &I) {
   // Transform load from a constant into a constant if possible.
   if (Constant *C = ConstantFoldLoadFromConstPtr(Ptr, I.getType(), DL)) {
     if (isa<UndefValue>(C))
-      return;
+      return markOverdefined(&I);
     return markConstant(IV, &I, C);
   }
 
@@ -1140,7 +1143,7 @@ CallOverdefined:
       if (Constant *C = ConstantFoldCall(F, Operands, TLI)) {
         // call -> undef.
         if (isa<UndefValue>(C))
-          return;
+          return markOverdefined(I);
         return markConstant(I, C);
       }
     }
@@ -1251,6 +1254,45 @@ void SCCPSolver::Solve() {
       visit(BB);
     }
   }
+}
+
+bool SCCPSolver::callItANight(Function &F) {
+  for (BasicBlock &BB : F) {
+    if (!BBExecutable.count(&BB))
+      continue;
+
+    for (Instruction &I : BB) {
+      // Look for instructions which produce undef values.
+      if (I.getType()->isVoidTy()) continue;
+
+      if (auto *STy = dyn_cast<StructType>(I.getType())) {
+        // Tracked calls must never be marked overdefined in ResolvedUndefsIn.
+        if (CallSite CS = CallSite(&I))
+          if (Function *F = CS.getCalledFunction())
+            if (MRVFunctionsTracked.count(F))
+              continue;
+
+        // extractvalue and insertvalue don't need to be marked; they are
+        // tracked as precisely as their operands.
+        if (isa<ExtractValueInst>(I) || isa<InsertValueInst>(I))
+          continue;
+
+        // Send the results of everything else to overdefined.  We could be
+        // more precise than this but it isn't worth bothering.
+        for (unsigned i = 0, e = STy->getNumElements(); i != e; ++i) {
+          LatticeVal &LV = getStructValueState(&I, i);
+          if (LV.isUnknown())
+            markOverdefined(LV, &I);
+        }
+        continue;
+      }
+
+      LatticeVal &LV = getValueState(&I);
+      if (LV.isUnknown())
+        markOverdefined(&I);
+    }
+  }
+  return true;
 }
 
 /// ResolvedUndefsIn - While solving the dataflow for a function, we assume
@@ -1611,14 +1653,9 @@ static bool runSCCP(Function &F, const DataLayout &DL,
   for (Argument &AI : F.args())
     Solver.markOverdefined(&AI);
 
-  // Solve for constants.
-  bool ResolvedUndefs = true;
-  while (ResolvedUndefs) {
-    Solver.Solve();
-    DEBUG(dbgs() << "RESOLVING UNDEFs\n");
-    ResolvedUndefs = Solver.ResolvedUndefsIn(F);
-  }
 
+  Solver.Solve();
+  Solver.callItANight(F);
   bool MadeChanges = false;
 
   // If we decided that there are basic blocks that are dead in this function,
