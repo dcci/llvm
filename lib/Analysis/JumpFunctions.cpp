@@ -22,6 +22,16 @@ using namespace llvm;
 
 #define DEBUG_TYPE "jump-functions"
 
+JumpFunctionAnalysis::JumpFunctionAnalysis(Module &M, CallGraph &CG)
+    : M(M), CG(CG) {
+  computeJumpFunctions();
+}
+
+void JumpFunctionAnalysis::computeJumpFunctions() {
+  for (Function &F : M)
+    llvm::errs() << "func: " << F.getName() << "\n";
+}
+
 char JumpFunctionsWrapperPass::ID = 0;
 INITIALIZE_PASS_BEGIN(JumpFunctionsWrapperPass, "jump-functions",
                       "Compute Jump Functions for module", false, true);
@@ -32,11 +42,13 @@ JumpFunctionsWrapperPass::JumpFunctionsWrapperPass() : ModulePass(ID) {
   initializeJumpFunctionsWrapperPassPass(*PassRegistry::getPassRegistry());
 }
 
-bool JumpFunctionsWrapperPass::runOnModule(Module &M) { return false; }
+bool JumpFunctionsWrapperPass::runOnModule(Module &M) {
+  JumpFuncs.reset(new JumpFunctionAnalysis(
+      M, getAnalysis<CallGraphWrapperPass>().getCallGraph()));
+  return false;
+}
 
 void JumpFunctionsWrapperPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();
-#if 0
 	AU.addRequired<CallGraphWrapperPass>();
-#endif
 }
