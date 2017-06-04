@@ -171,6 +171,7 @@ void initializeInstructionSelectPass(PassRegistry&);
 void initializeInterleavedAccessPass(PassRegistry&);
 void initializeInternalizeLegacyPassPass(PassRegistry&);
 void initializeIntervalPartitionPass(PassRegistry&);
+void initializeJumpFunctionsWrapperPassPass(PassRegistry &);
 void initializeJumpThreadingPass(PassRegistry&);
 void initializeLCSSAVerificationPassPass(PassRegistry&);
 void initializeLCSSAWrapperPassPass(PassRegistry&);
