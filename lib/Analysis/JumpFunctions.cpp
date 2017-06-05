@@ -13,6 +13,7 @@
 
 #include "llvm/Analysis/JumpFunctions.h"
 #include "llvm/ADT/SCCIterator.h"
+#include "llvm/IR/Dominators.h"
 #include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
@@ -27,9 +28,44 @@ JumpFunctionAnalysis::JumpFunctionAnalysis(Module &M, CallGraph &CG)
   computeJumpFunctions();
 }
 
+void JumpFunctionAnalysis::analyzeParamsInBasicBlock(BasicBlock &BB) {
+}
+
+void JumpFunctionAnalysis::createJumpFunction(CallSite *CS, Value *Operand,
+                                             unsigned ArgPosition) {
+  // We don't deal with aggregates for now.
+  if (Operand->getType()->getScalarType())
+    return;
+  if (!isa<Constant>(Operand))
+    return;
+}
+
+void JumpFunctionAnalysis::computeJumpFunctionForBasicBlock(BasicBlock &BB) {
+  for (Instruction &I : BB) {
+    auto *CI = dyn_cast<CallInst>(&I);
+    if (!CI || CI->getNumOperands() == 0)
+      continue;
+    auto *CS = new CallSite(CI);
+    unsigned ArgPos = 0;
+    for (Value *Op : I.operands()) {
+      createJumpFunction(CS, Op, ArgPos);
+      ArgPos++;
+    }
+  }
+}
+
+void JumpFunctionAnalysis::analyzeFunction(Function &F) {
+  auto DT = DominatorTree(F);
+  for (auto DTN : depth_first(DT.getRootNode())) {
+    BasicBlock *BB = DTN->getBlock();
+    analyzeParamsInBasicBlock(*BB);
+    computeJumpFunctionForBasicBlock(*BB);
+  }
+}
+
 void JumpFunctionAnalysis::computeJumpFunctions() {
   for (Function &F : M)
-    llvm::errs() << "func: " << F.getName() << "\n";
+    analyzeFunction(F);
 }
 
 char JumpFunctionsWrapperPass::ID = 0;

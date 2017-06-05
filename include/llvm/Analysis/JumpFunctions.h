@@ -19,10 +19,25 @@
 
 using namespace llvm;
 
+struct JumpFunction {
+  enum FType {
+    Unknown,
+    Constant
+  };
+  enum FType Type;
+
+  // If FType is constant, this field contains the constant value hold.
+  Value *ConstVal;
+};
+
 class JumpFunctionAnalysis {
 public:
   JumpFunctionAnalysis(Module &M, CallGraph &CG);
   void computeJumpFunctions();
+  void analyzeFunction(Function &);
+  void analyzeParamsInBasicBlock(BasicBlock &);
+  void computeJumpFunctionForBasicBlock(BasicBlock &);
+  void createJumpFunction(CallSite *, Value *, unsigned);
 
 private:
   Module &M;
