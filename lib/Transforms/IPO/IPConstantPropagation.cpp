@@ -16,8 +16,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Transforms/IPO.h"
+#include "llvm/ADT/SCCIterator.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
+#include "llvm/Analysis/CallGraph.h"
+#include "llvm/Analysis/CallGraphSCCPass.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/Constants.h"
@@ -41,6 +44,7 @@ namespace {
     }
 
     bool runOnModule(Module &M) override;
+    void getAnalysisUsage(AnalysisUsage &AU) const override;
   };
 }
 
@@ -261,26 +265,59 @@ INITIALIZE_PASS(IPCP, "ipconstprop",
 
 ModulePass *llvm::createIPConstantPropagationPass() { return new IPCP(); }
 
+static void solveForSingleSCC(Function *F) {
+  for (BasicBlock &BB : *F) {
+    for (Instruction &I : BB) {
+      if (!isa<CallInst>(I))
+        continue;
+      CallSite CS(&I);
+      assert(CS && "This should be a call instruction");
+#if 0
+      getJumpFunctionForCallSite();
+#endif
+    }
+  }
+}
+
+static void printSCC() {
+#if 0
+  unsigned SCCNum = 0;
+  for (scc_iterator<CallGraph *> I = scc_begin(&CG); !I.isAtEnd(); ++I) {
+    llvm::errs() << "Component " << SCCNum << "\n";
+    for (auto &FI : *I) {
+      Function *F = FI->getFunction();
+      if (F)
+        llvm::errs() << F->getName() << "\n";
+      else
+        llvm::errs() << "dummy\n";
+    }
+    SCCNum++;
+  }
+#endif
+}
+
+static bool performIPCP(Module &M, CallGraph &CG) {
+  SmallVector<Function *, 32> Worklist;
+
+  for (scc_iterator<CallGraph *> I = scc_begin(&CG); !I.isAtEnd(); ++I) {
+    Function *F = I->front()->getFunction();
+    if (F && !F->isDeclaration() && F->hasInternalLinkage())
+      Worklist.push_back(F);
+  }
+
+  for (Function *F : reverse(Worklist))
+    solveForSingleSCC(F);
+  return false;
+}
+
 bool IPCP::runOnModule(Module &M) {
   if (skipModule(M))
     return false;
 
-  bool Changed = false;
-  bool LocalChange = true;
+  CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
+  return performIPCP(M, CG);
+}
 
-  // FIXME: instead of using smart algorithms, we just iterate until we stop
-  // making changes.
-  while (LocalChange) {
-    LocalChange = false;
-    for (Function &F : M)
-      if (!F.isDeclaration()) {
-        // Delete any klingons.
-        F.removeDeadConstantUsers();
-        if (F.hasLocalLinkage())
-          LocalChange |= PropagateConstantsIntoArguments(F);
-        Changed |= PropagateConstantReturn(F);
-      }
-    Changed |= LocalChange;
-  }
-  return Changed;
+void IPCP::getAnalysisUsage(AnalysisUsage &AU) const {
+  AU.addRequired<CallGraphWrapperPass>();
 }
