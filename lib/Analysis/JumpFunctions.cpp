@@ -88,10 +88,10 @@ void JumpFunctionAnalysis::computeJumpFunctions() {
 
 char JumpFunctionsPrinterLegacyPass::ID = 0;
 INITIALIZE_PASS_BEGIN(JumpFunctionsPrinterLegacyPass, "print-jumpfunctions",
-                      "Jump Functions printer", false, false);
+                      "Jump Functions printer", false, false)
 INITIALIZE_PASS_DEPENDENCY(JumpFunctionsWrapperPass)
 INITIALIZE_PASS_END(JumpFunctionsPrinterLegacyPass, "print-jumpfunctions",
-                    "Jump Functions printer", false, false);
+                    "Jump Functions printer", false, false)
 
 JumpFunctionsPrinterLegacyPass::JumpFunctionsPrinterLegacyPass()
     : ModulePass(ID) {
@@ -111,10 +111,8 @@ void JumpFunctionsPrinterLegacyPass::getAnalysisUsage(AnalysisUsage &AU) const {
 }
 
 char JumpFunctionsWrapperPass::ID = 0;
-INITIALIZE_PASS_BEGIN(JumpFunctionsWrapperPass, "jump-functions",
-                      "Compute Jump Functions for module", false, true);
-INITIALIZE_PASS_END(JumpFunctionsWrapperPass, "jump-functions",
-                    "Compute Jump Functions for module", false, true);
+INITIALIZE_PASS(JumpFunctionsWrapperPass, "jump-functions",
+                "Compute Jump Functions for module", false, true);
 
 JumpFunctionsWrapperPass::JumpFunctionsWrapperPass() : ModulePass(ID) {
   initializeJumpFunctionsWrapperPassPass(*PassRegistry::getPassRegistry());
