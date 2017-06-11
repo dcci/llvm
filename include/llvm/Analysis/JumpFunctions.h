@@ -19,7 +19,19 @@
 
 using namespace llvm;
 
-struct JumpFunction {
+class JumpFunction {
+public:
+  void setConstant(Constant *C) {
+    Type = Constant;
+    ConstVal = C;
+  }
+
+  void setUnknown() {
+    Type = Unknown;
+    ConstVal = nullptr;
+  }
+
+private:
   enum FType {
     Unknown,
     Constant
@@ -28,20 +40,20 @@ struct JumpFunction {
 
   // If FType is constant, this field contains the constant value hold.
   Value *ConstVal;
+
 };
 
 class JumpFunctionAnalysis {
 public:
-  JumpFunctionAnalysis(Module &M, CallGraph &CG);
+  JumpFunctionAnalysis(Module &M);
   void computeJumpFunctions();
   void analyzeFunction(Function &);
-  void analyzeParamsInBasicBlock(BasicBlock &);
   void computeJumpFunctionForBasicBlock(BasicBlock &);
-  void createJumpFunction(CallSite *, Value *, unsigned);
+  void createJumpFunction(CallInst *);
 
 private:
   Module &M;
-  CallGraph &CG;
+  DenseMap<std::pair<CallSite, unsigned>, JumpFunction> JumpFunctionMap;
 };
 
 class JumpFunctionsWrapperPass : public ModulePass {

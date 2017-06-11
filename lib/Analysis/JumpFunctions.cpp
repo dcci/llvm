@@ -23,21 +23,24 @@ using namespace llvm;
 
 #define DEBUG_TYPE "jump-functions"
 
-JumpFunctionAnalysis::JumpFunctionAnalysis(Module &M, CallGraph &CG)
-    : M(M), CG(CG) {
+JumpFunctionAnalysis::JumpFunctionAnalysis(Module &M) : M(M) {
   computeJumpFunctions();
 }
 
-void JumpFunctionAnalysis::analyzeParamsInBasicBlock(BasicBlock &BB) {
-}
-
-void JumpFunctionAnalysis::createJumpFunction(CallSite *CS, Value *Operand,
-                                             unsigned ArgPosition) {
-  // We don't deal with aggregates for now.
-  if (Operand->getType()->getScalarType())
-    return;
-  if (!isa<Constant>(Operand))
-    return;
+void JumpFunctionAnalysis::createJumpFunction(CallInst *CI) {
+  CallSite CS(CI);
+  unsigned ArgNo = 0;
+  for (CallSite::arg_iterator AI = CS.arg_begin(), E = CS.arg_end();
+       AI != E; ++AI) {
+    Value *V = *AI;
+    JumpFunction F;
+    if (auto *CV = dyn_cast<Constant>(V))
+      F.setConstant(CV);
+    else
+      F.setUnknown();
+    JumpFunctionMap[{CS, ArgNo}] = F;
+    ArgNo++;
+  }
 }
 
 void JumpFunctionAnalysis::computeJumpFunctionForBasicBlock(BasicBlock &BB) {
@@ -45,12 +48,7 @@ void JumpFunctionAnalysis::computeJumpFunctionForBasicBlock(BasicBlock &BB) {
     auto *CI = dyn_cast<CallInst>(&I);
     if (!CI || CI->getNumOperands() == 0)
       continue;
-    auto *CS = new CallSite(CI);
-    unsigned ArgPos = 0;
-    for (Value *Op : I.operands()) {
-      createJumpFunction(CS, Op, ArgPos);
-      ArgPos++;
-    }
+    createJumpFunction(CI);
   }
 }
 
@@ -58,7 +56,6 @@ void JumpFunctionAnalysis::analyzeFunction(Function &F) {
   auto DT = DominatorTree(F);
   for (auto DTN : depth_first(DT.getRootNode())) {
     BasicBlock *BB = DTN->getBlock();
-    analyzeParamsInBasicBlock(*BB);
     computeJumpFunctionForBasicBlock(*BB);
   }
 }
@@ -79,8 +76,7 @@ JumpFunctionsWrapperPass::JumpFunctionsWrapperPass() : ModulePass(ID) {
 }
 
 bool JumpFunctionsWrapperPass::runOnModule(Module &M) {
-  JumpFuncs.reset(new JumpFunctionAnalysis(
-      M, getAnalysis<CallGraphWrapperPass>().getCallGraph()));
+  JumpFuncs.reset(new JumpFunctionAnalysis(M));
   return false;
 }
 
