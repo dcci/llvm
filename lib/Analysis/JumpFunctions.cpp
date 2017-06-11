@@ -106,7 +106,7 @@ bool JumpFunctionsPrinterLegacyPass::runOnModule(Module &M) {
 
 void JumpFunctionsPrinterLegacyPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();
-  AU.addRequired<CallGraphWrapperPass>();
+  AU.addRequired<JumpFunctionsWrapperPass>();
 }
 
 char JumpFunctionsWrapperPass::ID = 0;
