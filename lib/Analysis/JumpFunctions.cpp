@@ -32,20 +32,21 @@ void JumpFunctionAnalysis::print(raw_ostream &OS) const {
   for (auto &KV : JumpFunctionMap) {
     CallSite CS = KV.first;
     std::vector<JumpFunction> JumpFuncs = KV.second;
-    OS << "Callsite: " << CS.getInstruction() << "\n";
+    OS << "Callsite: " << *CS.getInstruction() << "\n";
     OS << "Jump functions\n";
     unsigned ArgNo = 0;
     for (JumpFunction &Func : JumpFuncs) {
       OS << "Arg " << ArgNo << " ";
       if (Func.isConstant()) {
         OS << "constant ";
-        OS << Func.getConstant() << "\n";
+        OS << Func.getConstant();
       } else if (Func.isUnknown()) {
         OS << "unknown ";
       }
       OS << "\n";
       ArgNo++;
     }
+    OS << "\n";
   }
 }
 
