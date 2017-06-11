@@ -59,6 +59,10 @@ public:
   void createJumpFunction(CallInst *);
   void print(raw_ostream &OS) const;
 
+  std::vector<JumpFunction> getJumpFunctionForCallSite(CallSite &CS) {
+    return JumpFunctionMap[CS];
+  }
+
 private:
   Module &M;
   DenseMap<CallSite, std::vector<JumpFunction>> JumpFunctionMap;
