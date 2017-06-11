@@ -21,6 +21,7 @@
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/CallGraph.h"
 #include "llvm/Analysis/CallGraphSCCPass.h"
+#include "llvm/Analysis/JumpFunctions.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/Constants.h"
@@ -265,48 +266,33 @@ INITIALIZE_PASS(IPCP, "ipconstprop",
 
 ModulePass *llvm::createIPConstantPropagationPass() { return new IPCP(); }
 
-static void solveForSingleSCC(Function *F) {
+static void solveForSingleSCC(Function *F, JumpFunctionAnalysis &JFA) {
   for (BasicBlock &BB : *F) {
     for (Instruction &I : BB) {
       if (!isa<CallInst>(I))
         continue;
       CallSite CS(&I);
       assert(CS && "This should be a call instruction");
-#if 0
-      getJumpFunctionForCallSite();
-#endif
+      std::vector<JumpFunction> Funcs = JFA.getJumpFunctionForCallSite(CS);
+      for (JumpFunction &F : Funcs) {
+        if (F.isConstant())
+          llvm::errs() << "patty\n";
+      }
     }
   }
 }
 
-static void printSCC() {
-#if 0
-  unsigned SCCNum = 0;
-  for (scc_iterator<CallGraph *> I = scc_begin(&CG); !I.isAtEnd(); ++I) {
-    llvm::errs() << "Component " << SCCNum << "\n";
-    for (auto &FI : *I) {
-      Function *F = FI->getFunction();
-      if (F)
-        llvm::errs() << F->getName() << "\n";
-      else
-        llvm::errs() << "dummy\n";
-    }
-    SCCNum++;
-  }
-#endif
-}
-
-static bool performIPCP(Module &M, CallGraph &CG) {
+static bool performIPCP(Module &M, CallGraph &CG, JumpFunctionAnalysis &JFA) {
   SmallVector<Function *, 32> Worklist;
 
   for (scc_iterator<CallGraph *> I = scc_begin(&CG); !I.isAtEnd(); ++I) {
     Function *F = I->front()->getFunction();
-    if (F && !F->isDeclaration() && F->hasInternalLinkage())
+    if (F && !F->isDeclaration())
       Worklist.push_back(F);
   }
 
   for (Function *F : reverse(Worklist))
-    solveForSingleSCC(F);
+    solveForSingleSCC(F, JFA);
   return false;
 }
 
@@ -315,9 +301,11 @@ bool IPCP::runOnModule(Module &M) {
     return false;
 
   CallGraph &CG = getAnalysis<CallGraphWrapperPass>().getCallGraph();
-  return performIPCP(M, CG);
+  JumpFunctionAnalysis &JFA = getAnalysis<JumpFunctionsWrapperPass>().getJumpFunctions();
+  return performIPCP(M, CG, JFA);
 }
 
 void IPCP::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addRequired<CallGraphWrapperPass>();
+  AU.addRequired<JumpFunctionsWrapperPass>();
 }
