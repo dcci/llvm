@@ -88,7 +88,7 @@ void JumpFunctionAnalysis::computeJumpFunctions() {
 char JumpFunctionsPrinterLegacyPass::ID = 0;
 INITIALIZE_PASS_BEGIN(JumpFunctionsPrinterLegacyPass, "print-jumpfunctions",
                       "Jump Functions printer", false, false);
-INITIALIZE_PASS_DEPENDENCY(JumpFunctionsPrinterLegacyPass)
+INITIALIZE_PASS_DEPENDENCY(JumpFunctionsWrapperPass)
 INITIALIZE_PASS_END(JumpFunctionsPrinterLegacyPass, "print-jumpfunctions",
                     "Jump Functions printer", false, false);
 
