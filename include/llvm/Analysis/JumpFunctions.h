@@ -34,7 +34,7 @@ public:
   bool isConstant() { return Type == Constant; }
   bool isUnknown() { return Type == Unknown; }
 
-  bool getConstant() {
+  Value *getConstant() {
     assert(Type == Constant && "This jump function is not constant!");
     return ConstVal;
   }

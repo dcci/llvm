@@ -39,7 +39,7 @@ void JumpFunctionAnalysis::print(raw_ostream &OS) const {
       OS << "Arg " << ArgNo << " ";
       if (Func.isConstant()) {
         OS << "constant ";
-        OS << Func.getConstant();
+        OS << *Func.getConstant();
       } else if (Func.isUnknown()) {
         OS << "unknown ";
       }
@@ -112,7 +112,7 @@ void JumpFunctionsPrinterLegacyPass::getAnalysisUsage(AnalysisUsage &AU) const {
 
 char JumpFunctionsWrapperPass::ID = 0;
 INITIALIZE_PASS(JumpFunctionsWrapperPass, "jump-functions",
-                "Compute Jump Functions for module", false, true);
+                "Compute Jump Functions for module", false, true)
 
 JumpFunctionsWrapperPass::JumpFunctionsWrapperPass() : ModulePass(ID) {
   initializeJumpFunctionsWrapperPassPass(*PassRegistry::getPassRegistry());
