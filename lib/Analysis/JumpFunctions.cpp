@@ -65,6 +65,26 @@ void JumpFunctionAnalysis::computeJumpFunctions() {
     analyzeFunction(F);
 }
 
+char JumpFunctionsPrinterLegacyPass::ID = 0;
+INITIALIZE_PASS_BEGIN(JumpFunctionsPrinterLegacyPass, "print-jumpfunctions",
+                      "Jump Functions printer", false, false);
+INITIALIZE_PASS_DEPENDENCY(JumpFunctionsPrinterLegacyPass)
+INITIALIZE_PASS_END(JumpFunctionsPrinterLegacyPass, "print-jumpfunctions",
+                    "Jump Functions printer", false, false);
+
+JumpFunctionsPrinterLegacyPass::JumpFunctionsPrinterLegacyPass()
+    : ModulePass(ID) {
+  initializeJumpFunctionsPrinterLegacyPassPass(
+      *PassRegistry::getPassRegistry());
+}
+
+bool JumpFunctionsPrinterLegacyPass::runOnModule(Module &M) { return false; }
+
+void JumpFunctionsPrinterLegacyPass::getAnalysisUsage(AnalysisUsage &AU) const {
+  AU.setPreservesAll();
+  AU.addRequired<CallGraphWrapperPass>();
+}
+
 char JumpFunctionsWrapperPass::ID = 0;
 INITIALIZE_PASS_BEGIN(JumpFunctionsWrapperPass, "jump-functions",
                       "Compute Jump Functions for module", false, true);
@@ -82,5 +102,4 @@ bool JumpFunctionsWrapperPass::runOnModule(Module &M) {
 
 void JumpFunctionsWrapperPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();
-	AU.addRequired<CallGraphWrapperPass>();
 }

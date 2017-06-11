@@ -56,6 +56,15 @@ private:
   DenseMap<std::pair<CallSite, unsigned>, JumpFunction> JumpFunctionMap;
 };
 
+class JumpFunctionsPrinterLegacyPass : public ModulePass {
+public:
+  JumpFunctionsPrinterLegacyPass();
+  static char ID;
+
+  bool runOnModule(Module &) override;
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
+};
+
 class JumpFunctionsWrapperPass : public ModulePass {
 public:
   JumpFunctionsWrapperPass();
