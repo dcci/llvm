@@ -27,9 +27,30 @@ JumpFunctionAnalysis::JumpFunctionAnalysis(Module &M) : M(M) {
   computeJumpFunctions();
 }
 
+void JumpFunctionAnalysis::print(raw_ostream &OS) const {
+  OS << "Jump Function informations:\n";
+  for (auto &KV : JumpFunctionMap) {
+    CallSite CS = KV.first;
+    std::vector<JumpFunction> JumpFuncs = KV.second;
+    OS << "Callsite: " << CS.getInstruction() << "\n";
+    OS << "Jump functions\n";
+    unsigned ArgNo = 0;
+    for (JumpFunction &Func : JumpFuncs) {
+      OS << "Arg " << ArgNo << " ";
+      if (Func.isConstant()) {
+        OS << "constant ";
+        OS << Func.getConstant() << "\n";
+      } else if (Func.isUnknown()) {
+        OS << "unknown ";
+      }
+      OS << "\n";
+      ArgNo++;
+    }
+  }
+}
+
 void JumpFunctionAnalysis::createJumpFunction(CallInst *CI) {
   CallSite CS(CI);
-  unsigned ArgNo = 0;
   for (CallSite::arg_iterator AI = CS.arg_begin(), E = CS.arg_end();
        AI != E; ++AI) {
     Value *V = *AI;
@@ -38,8 +59,7 @@ void JumpFunctionAnalysis::createJumpFunction(CallInst *CI) {
       F.setConstant(CV);
     else
       F.setUnknown();
-    JumpFunctionMap[{CS, ArgNo}] = F;
-    ArgNo++;
+    JumpFunctionMap[CS].push_back(F);
   }
 }
 
@@ -78,7 +98,11 @@ JumpFunctionsPrinterLegacyPass::JumpFunctionsPrinterLegacyPass()
       *PassRegistry::getPassRegistry());
 }
 
-bool JumpFunctionsPrinterLegacyPass::runOnModule(Module &M) { return false; }
+bool JumpFunctionsPrinterLegacyPass::runOnModule(Module &M) {
+  auto &JumpFuncs = getAnalysis<JumpFunctionsWrapperPass>().getJumpFunctions();
+  JumpFuncs.print(dbgs());
+  return false;
+}
 
 void JumpFunctionsPrinterLegacyPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.setPreservesAll();

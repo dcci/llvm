@@ -31,6 +31,14 @@ public:
     ConstVal = nullptr;
   }
 
+  bool isConstant() { return Type == Constant; }
+  bool isUnknown() { return Type == Unknown; }
+
+  bool getConstant() {
+    assert(Type == Constant && "This jump function is not constant!");
+    return ConstVal;
+  }
+
 private:
   enum FType {
     Unknown,
@@ -39,8 +47,7 @@ private:
   enum FType Type;
 
   // If FType is constant, this field contains the constant value hold.
-  Value *ConstVal;
-
+  Value *ConstVal = nullptr;
 };
 
 class JumpFunctionAnalysis {
@@ -50,10 +57,11 @@ public:
   void analyzeFunction(Function &);
   void computeJumpFunctionForBasicBlock(BasicBlock &);
   void createJumpFunction(CallInst *);
+  void print(raw_ostream &OS) const;
 
 private:
   Module &M;
-  DenseMap<std::pair<CallSite, unsigned>, JumpFunction> JumpFunctionMap;
+  DenseMap<CallSite, std::vector<JumpFunction>> JumpFunctionMap;
 };
 
 class JumpFunctionsPrinterLegacyPass : public ModulePass {
@@ -72,6 +80,9 @@ public:
 
   bool runOnModule(Module &) override;
   void getAnalysisUsage(AnalysisUsage &AU) const override;
+
+  JumpFunctionAnalysis &getJumpFunctions() { return *JumpFuncs; }
+  const JumpFunctionAnalysis &getJumpFunctions() const { return *JumpFuncs; }
 
 private:
   std::unique_ptr<JumpFunctionAnalysis> JumpFuncs;
