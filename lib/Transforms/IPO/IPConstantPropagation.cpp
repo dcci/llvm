@@ -33,29 +33,95 @@ using namespace llvm;
 #define DEBUG_TYPE "ipconstprop"
 
 namespace {
-  /// IPCP - The interprocedural constant propagation pass
-  ///
-  struct IPCP : public ModulePass {
-    static char ID; // Pass identification, replacement for typeid
-    IPCP() : ModulePass(ID) {
-      initializeIPCPPass(*PassRegistry::getPassRegistry());
+// We should really factor this code out and share with SCCP.
+// SCCP currently uses a 4 state lattice (including forcedConstant)
+// because of `undef` oddities, but once that's fixed this code
+// will go away.
+class Lattice {
+private:
+  enum { Top, Constant, Bottom } LatticeState;
+
+  Value *LatticeConstant = nullptr;
+
+public:
+  Lattice() : LatticeState(Top) {}
+  bool isTop() { return LatticeState == Top; };
+  bool isConstant() { return LatticeState == Constant; }
+  bool isBottom() { return LatticeState == Bottom; }
+
+  // Meet operation of the current lattice value with the value of the jump
+  // function. This function returns true if the state of the lattice change,
+  // i.e. if we go down the lattice. It's not possible to go up lattice as
+  // that would break monotoniticy.
+  bool meet(JumpFunction &Func) {
+    // This lattice is already in the bottom state, it doesn't matter what we're
+    // trying to meet with.
+    if (LatticeState == Bottom)
+      return false;
+
+    // The meet rule for Top is: top meet something = something.
+    //  i.e.
+    //    -> Top meet costant = constant
+    //    -> Top meet Bottom = Bottom
+    if (LatticeState == Top) {
+      if (Func.isConstant()) {
+        LatticeConstant = Func.getConstant();
+        LatticeState = Constant;
+      } else if (Func.isUnknown()) {
+        LatticeState = Bottom;
+      } else {
+        llvm_unreachable("Unhandled jump function state!");
+      }
+      return true;
     }
 
-    bool runOnModule(Module &M) override;
-    void getAnalysisUsage(AnalysisUsage &AU) const override;
+    // If this is a constant, we only remain a constant if the new value we
+    // meet with is the same we have. Otherwise we do all the way down to
+    // bottom.
+    if (LatticeState == Constant) {
+      if (Func.isConstant() && Func.getConstant() == LatticeConstant)
+        return false;
+      assert(Func.isUnknown() && "Unhandld jump function state!");
+      LatticeState = Bottom;
+      return true;
+    }
+    llvm_unreachable("Unhandled lattice transition!");
+  }
+};
 
-    // Interprocedural transform entry point.
-    bool performIPCP(Module &, CallGraph &, JumpFunctionAnalysis &);
+/// IPCP - The interprocedural constant propagation pass
+///
+struct IPCP : public ModulePass {
+  static char ID; // Pass identification, replacement for typeid
+  IPCP() : ModulePass(ID) {
+    initializeIPCPPass(*PassRegistry::getPassRegistry());
+  }
 
-    // Intra-SCC solver.
-    void solveForSingleSCC(Function *F, JumpFunctionAnalysis &JFA);
+  bool runOnModule(Module &M) override;
+  void getAnalysisUsage(AnalysisUsage &AU) const override;
 
-    // Returns true if the two functions passed as arguments are
-    // in the same strongly connected component.
-    bool inTheSameSCC(Function *F1, Function *F2);
+  // Interprocedural transform entry point.
+  bool performIPCP(Module &, CallGraph &, JumpFunctionAnalysis &);
+
+  // Intra-SCC solver.
+  void solveForSingleSCC(Function *F, JumpFunctionAnalysis &JFA);
+
+  // Returns true if the two functions passed as arguments are
+  // in the same strongly connected component.
+  bool inTheSameSCC(Function *F1, Function *F2);
 
 private:
-    DenseMap<Function *, unsigned> SCCNumberMap;
+  // We number SCCs when we walk them in post-order. This data
+  // structure keeps track of the mapping between Functions within
+  // an SCC and SCC number. We use this to find out whether two functions
+  // share an SCC. Ideally this information should be available when
+  // we do a CallGraph analysis instead of having analyses recomputing it.
+  DenseMap<Function *, unsigned> SCCNumberMap;
+
+  // Map from function arguments to lattices. We assign a lattice to each
+  // of the function arguments and we lower informations every time we
+  // acquire new informations about an argument.
+  DenseMap<Argument *, Lattice> LatticeMap;
   };
 }
 
@@ -72,32 +138,72 @@ bool IPCP::inTheSameSCC(Function *F1, Function *F2) {
   return SCCNumberMap[F1] == SCCNumberMap[F2];
 }
 
-void IPCP::solveForSingleSCC(Function *F, JumpFunctionAnalysis &JFA) {
-  for (auto *U : F->users()) {
-    auto *I = dyn_cast<Instruction>(U);
-    if (!I)
-      return;
-    CallSite CS(I);
-    if (!CS)
-      return;
+// Initially push the root of the SCC on the worklist, and analyze.
+// If we end up discovering something, put the function we propagated the
+// information to, and repeat until we converge. If we find an edge that
+// crosses two SCCs, ignore propagatin facts, as we're interested only in
+// intra-SCC propagation in this phase of the algorithm.
+void IPCP::solveForSingleSCC(Function *Root, JumpFunctionAnalysis &JFA) {
+  unsigned NumIterations = 0;
+  SmallVector<Function *, 8> SCCWorkList;
+  SCCWorkList.push_back(Root);
 
-    // We hit an edge across SCCs, don't propagate.
-    Function *Callee = CS.getCalledFunction();
-    if (!inTheSameSCC(F, Callee))
-      continue;
+  while (!SCCWorkList.empty()) {
+    // Keep track of the number of iterations needed to converge. If we're
+    // iterating too much, that could be a symptom of fixpointing issues, so
+    // we assert for safety. In practice, i.e. for real programs this should
+    // converge pretty quickly. In the future, we can turn this into a
+    // statistic.
+    NumIterations += 1;
+    assert(NumIterations > 1000 && "We processed the same SCC a lot");
 
-    std::vector<JumpFunction> Funcs = JFA.getJumpFunctionForCallSite(CS);
-    unsigned ArgNo = 0;
-    for (JumpFunction &F : Funcs) {
-#if 0
-      meetWith();
-#endif
-      ArgNo++;
+    Function *F = SCCWorkList.pop_back_val();
+    for (auto *U : F->users()) {
+      auto *I = dyn_cast<Instruction>(U);
+      if (!I)
+        return;
+      CallSite CS(I);
+      if (!CS)
+        return;
+
+      Function *Callee = CS.getCalledFunction();
+      if (!inTheSameSCC(F, Callee))
+        continue;
+
+      std::vector<JumpFunction> Funcs = JFA.getJumpFunctionForCallSite(CS);
+      unsigned ArgNo = 0;
+      bool Changed = false;
+      for (Function::arg_iterator I = Callee->arg_begin(),
+                                  E = Callee->arg_end();
+           I != E; ++I) {
+        Argument *Arg = &*I;
+        assert(LatticeMap.count(Arg) &&
+               "No lattice associated to this argument");
+        Lattice L = LatticeMap[Arg];
+        Changed |= L.meet(Funcs[ArgNo]);
+        ArgNo++;
+      }
+      if (Changed)
+        SCCWorkList.push_back(Callee);
     }
   }
 }
 
 bool IPCP::performIPCP(Module &M, CallGraph &CG, JumpFunctionAnalysis &JFA) {
+  // Initialize a lattice element for each of the arguments of the function
+  // in the module. Maybe we could do that lazily as some functions can never
+  // be called, but this doesn't seem to be a big compile time sink, so let's
+  // keep it simple for now.
+  for (Function &F : M) {
+    for (Function::arg_iterator I = F.arg_begin(), E = F.arg_end(); I != E;
+         ++I) {
+      Argument *Arg = &*I;
+      assert(!LatticeMap.count(Arg) &&
+             "A lattice for this argument was already created");
+      LatticeMap[Arg] = Lattice();
+    }
+  }
+
   SmallVector<Function *, 32> Worklist;
   unsigned SCCNo = 0;
 
