@@ -17,6 +17,7 @@
 
 #include "llvm/Transforms/IPO.h"
 #include "llvm/ADT/SCCIterator.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/CallGraph.h"
@@ -25,6 +26,7 @@
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
@@ -149,7 +151,9 @@ bool IPCP::inTheSameSCC(Function *F1, Function *F2) {
 void IPCP::solveForSingleSCC(Function *Root, JumpFunctionAnalysis &JFA) {
   unsigned NumIterations = 0;
   SmallVector<Function *, 8> SCCWorkList;
+  SmallPtrSet<Function *, 8> Visited;
   SCCWorkList.push_back(Root);
+  Visited.insert(Root);
 
   while (!SCCWorkList.empty()) {
     // Keep track of the number of iterations needed to converge. If we're
@@ -161,13 +165,13 @@ void IPCP::solveForSingleSCC(Function *Root, JumpFunctionAnalysis &JFA) {
     assert(NumIterations < 1000 && "We processed the same SCC a lot");
 
     Function *F = SCCWorkList.pop_back_val();
-    for (auto *U : F->users()) {
-      auto *I = dyn_cast<Instruction>(U);
-      if (!I)
-        return;
-      CallSite CS(I);
+    for (Instruction &I : instructions(F)) {
+      auto *CI = dyn_cast<CallInst>(&I);
+      if (!CI)
+        continue;
+      CallSite CS(CI);
       if (!CS)
-        return;
+        continue;
 
       Function *Callee = CS.getCalledFunction();
 
@@ -187,12 +191,21 @@ void IPCP::solveForSingleSCC(Function *Root, JumpFunctionAnalysis &JFA) {
         Argument *Arg = &*I;
         assert(LatticeMap.count(Arg) &&
                "No lattice associated to this argument");
-        Lattice L = LatticeMap[Arg];
+        Lattice &L = LatticeMap[Arg];
         Changed |= L.meet(Funcs[ArgNo]);
         ArgNo++;
       }
-      if (Changed)
+      if (Changed) {
         SCCWorkList.push_back(Callee);
+        continue;
+      }
+      // There's probably a better way of doing this that doesn't involve
+      // maintaining a separate set.
+      if (!Visited.count(Callee)) {
+        SCCWorkList.push_back(Callee);
+        Visited.insert(Callee);
+        continue;
+      }
     }
   }
 }
