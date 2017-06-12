@@ -158,7 +158,7 @@ void IPCP::solveForSingleSCC(Function *Root, JumpFunctionAnalysis &JFA) {
     // converge pretty quickly. In the future, we can turn this into a
     // statistic.
     NumIterations += 1;
-    assert(NumIterations > 1000 && "We processed the same SCC a lot");
+    assert(NumIterations < 1000 && "We processed the same SCC a lot");
 
     Function *F = SCCWorkList.pop_back_val();
     for (auto *U : F->users()) {
