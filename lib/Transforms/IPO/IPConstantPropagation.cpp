@@ -32,6 +32,8 @@ using namespace llvm;
 
 #define DEBUG_TYPE "ipconstprop"
 
+#define MYDEBUG // FIXME: this needs to go away.
+
 namespace {
 // We should really factor this code out and share with SCCP.
 // SCCP currently uses a 4 state lattice (including forcedConstant)
@@ -47,6 +49,7 @@ public:
   Lattice() : LatticeState(Top) {}
   bool isTop() { return LatticeState == Top; };
   bool isConstant() { return LatticeState == Constant; }
+  Value *getConstant() { return LatticeConstant; }
   bool isBottom() { return LatticeState == Bottom; }
 
   // Meet operation of the current lattice value with the value of the jump
@@ -234,6 +237,21 @@ bool IPCP::performIPCP(Module &M, CallGraph &CG, JumpFunctionAnalysis &JFA) {
 
   for (Function *F : reverse(Worklist))
     solveForSingleSCC(F, JFA);
+
+#ifdef MYDEBUG
+  for (auto &KV : LatticeMap) {
+    llvm::errs() << "Arg: " << *KV.first << "\n";
+    Lattice L = KV.second;
+    if (L.isTop())
+      llvm::errs() << "Top";
+    if (L.isConstant())
+      llvm::errs() << "Constant: " << *(L.getConstant());
+    if (L.isBottom())
+      llvm::errs() << "Bottom";
+    llvm::errs() << "\n";
+  }
+#endif
+
   return false;
 }
 
