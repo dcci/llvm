@@ -170,6 +170,11 @@ void IPCP::solveForSingleSCC(Function *Root, JumpFunctionAnalysis &JFA) {
         return;
 
       Function *Callee = CS.getCalledFunction();
+
+      // Guard against recursion.
+      if (F == Callee)
+        continue;
+
       if (!inTheSameSCC(F, Callee))
         continue;
 
