@@ -7,11 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This pass implements an _extremely_ simple interprocedural constant
-// propagation pass.  It could certainly be improved in many different ways,
-// like using a worklist.  This pass makes arguments dead, but does not remove
-// them.  The existing dead argument elimination pass should be run after this
-// to clean up the mess.
+// Add a real description here.
 //
 //===----------------------------------------------------------------------===//
 
