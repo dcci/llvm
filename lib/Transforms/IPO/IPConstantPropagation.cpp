@@ -107,6 +107,9 @@ struct IPCP : public ModulePass {
   // Intra-SCC solver.
   void solveForSingleSCC(Function *F, JumpFunctionAnalysis &JFA);
 
+  // Inter-SCC solver.
+  void propagateBetweenSCCs(JumpFunctionAnalysis &JFA);
+
   // Returns true if the two functions passed as arguments are
   // in the same strongly connected component.
   bool inTheSameSCC(Function *F1, Function *F2);
@@ -123,6 +126,11 @@ private:
   // of the function arguments and we lower informations every time we
   // acquire new informations about an argument.
   DenseMap<Argument *, Lattice> LatticeMap;
+
+  // This keeps track of the edges which have one end in one SCC and the
+  // other end in another. We use this vector to do cross-SCC propagation
+  // of facts, if any.
+  std::vector<CallSite> InterSCCEdges;
   };
 }
 
@@ -137,6 +145,24 @@ bool IPCP::inTheSameSCC(Function *F1, Function *F2) {
   assert(SCCNumberMap.count(F1) == 1 && SCCNumberMap.count(F2) == 1 &&
          "Functions not belonging to any SCC!");
   return SCCNumberMap[F1] == SCCNumberMap[F2];
+}
+
+void IPCP::propagateBetweenSCCs(JumpFunctionAnalysis &JFA) {
+  for (auto &CS : InterSCCEdges) {
+    unsigned ArgNo = 0;
+    Function *Caller = CS.getParent()->getParent();
+    Function *Callee = CS.getCalledFunction();
+    std::vector<JumpFunction> Funcs = JFA.getJumpFunctionForCallSite(CS);
+
+    for (Function::arg_iterator I = Callee->arg_begin(), E = Callee->arg_end();
+         I != E; ++I) {
+      Argument *Arg = &*I;
+      assert(LatticeMap.count(Arg) && "No lattice associated to this argument");
+      Lattice &L = LatticeMap[Arg];
+      L.meet(Funcs[ArgNo]);
+      ArgNo++;
+    }
+  }
 }
 
 // Initially push the root of the SCC on the worklist, and analyze.
@@ -175,8 +201,17 @@ void IPCP::solveForSingleSCC(Function *Root, JumpFunctionAnalysis &JFA) {
       if (F == Callee)
         continue;
 
-      if (!inTheSameSCC(F, Callee))
+      // Once we're done propagating within a single SCC, we see if we
+      // can propagate facts across SCCs with are connected by an edge in
+      // the reduced graph where an SCC is a single node and there's an
+      // edge between nodes if there's an edge flowing going form a node of
+      // an SCC to a node of another SCC in the original (unreduced) graph.
+      // Here we keep track of the node ends (the order matters!) to reevaluate
+      // once we're done.
+      if (!inTheSameSCC(F, Callee)) {
+        InterSCCEdges.push_back(CS);
         continue;
+      }
 
       std::vector<JumpFunction> Funcs = JFA.getJumpFunctionForCallSite(CS);
       unsigned ArgNo = 0;
@@ -249,8 +284,14 @@ bool IPCP::performIPCP(Module &M, CallGraph &CG, JumpFunctionAnalysis &JFA) {
     SCCNo++;
   }
 
-  for (Function *F : reverse(Worklist))
+  for (Function *F : reverse(Worklist)) {
+    // Clear the vector of edges between SCCs, as solveForSingleSCC will
+    // compute a fresh one for us.
+    InterSCCEdges.clear();
+
     solveForSingleSCC(F, JFA);
+    propagateBetweenSCCs(JFA);
+  }
 
 #ifdef MYDEBUG
   for (auto &KV : LatticeMap) {
