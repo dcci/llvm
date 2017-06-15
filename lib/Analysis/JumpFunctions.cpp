@@ -83,7 +83,8 @@ void JumpFunctionAnalysis::analyzeFunction(Function &F) {
 
 void JumpFunctionAnalysis::computeJumpFunctions() {
   for (Function &F : M)
-    analyzeFunction(F);
+    if (!F.isDeclaration())
+      analyzeFunction(F);
 }
 
 char JumpFunctionsPrinterLegacyPass::ID = 0;
