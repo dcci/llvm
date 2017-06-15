@@ -150,7 +150,6 @@ bool IPCP::inTheSameSCC(Function *F1, Function *F2) {
 void IPCP::propagateBetweenSCCs(JumpFunctionAnalysis &JFA) {
   for (auto &CS : InterSCCEdges) {
     unsigned ArgNo = 0;
-    Function *Caller = CS.getParent()->getParent();
     Function *Callee = CS.getCalledFunction();
     std::vector<JumpFunction> Funcs = JFA.getJumpFunctionForCallSite(CS);
 
