@@ -364,6 +364,7 @@ void initializeTargetTransformInfoWrapperPassPass(PassRegistry&);
 void initializeThreadSanitizerPass(PassRegistry&);
 void initializeTwoAddressInstructionPassPass(PassRegistry&);
 void initializeTypeBasedAAWrapperPassPass(PassRegistry&);
+void initializeUndefPropagationPassPass(PassRegistry&);
 void initializeUnifyFunctionExitNodesPass(PassRegistry&);
 void initializeUnpackMachineBundlesPass(PassRegistry&);
 void initializeUnreachableBlockElimLegacyPassPass(PassRegistry&);

@@ -574,6 +574,13 @@ ModulePass *createNameAnonGlobalPass();
 // used.
 //
 FunctionPass *createLibCallsShrinkWrapPass();
+
+//===----------------------------------------------------------------------===//
+//
+// UndefPropagation - Propagate undef over the SSA graph.
+//
+FunctionPass *createUndefPropagationPass();
+
 } // End llvm namespace
 
 #endif
