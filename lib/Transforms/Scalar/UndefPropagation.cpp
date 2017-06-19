@@ -253,11 +253,11 @@ bool UndefPropagationPass::processInstruction(const Instruction *I) {
   auto *Op0 = dyn_cast<Instruction>(I->getOperand(0));
   auto *Op1 = dyn_cast<Instruction>(I->getOperand(1));
   if (Op0 || Op1) {
-    Value *V1 = getLatticeUndef(Op0);
-    Value *V2 = getLatticeUndef(Op1);
+    Value *V0 = getLatticeUndef(Op0);
+    Value *V1 = getLatticeUndef(Op1);
     Value *Simplified =
-        SimplifyBinOp(I->getOpcode(), V1 ? V1 : I->getOperand(0),
-                      V2 ? V2 : I->getOperand(1), SQ);
+        SimplifyBinOp(I->getOpcode(), V0 ? V0 : I->getOperand(0),
+                      V1 ? V1 : I->getOperand(1), SQ);
     if (Simplified && isa<UndefValue>(Simplified))
       return L.meet(Simplified);
   }
