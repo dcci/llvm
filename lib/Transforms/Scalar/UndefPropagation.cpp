@@ -173,6 +173,8 @@ public:
   void processInterSCC(EdgesVector &);
   bool processPHI(const PHINode *);
   bool processInstruction(const Instruction *);
+  void buildInducedSubgraph(const Instruction *,
+                            DenseSet<const Instruction *> &);
 
   UndefLattice &getLatticeFor(const Instruction *I) {
     assert(LatticeMap.count(I) && "This instruction is not in the map!");
@@ -348,13 +350,30 @@ void UndefPropagationPass::processInterSCC(EdgesVector &InterSCCEdges) {
   }
 }
 
+void UndefPropagationPass::buildInducedSubgraph(
+    const Instruction *Start, DenseSet<const Instruction *> &Visited) {
+  if (Visited.count(Start))
+    return;
+  Visited.insert(Start);
+  SCCFinder.Start(Start);
+  for (auto *U : Start->users()) {
+    auto *I = dyn_cast<Instruction>(U);
+    if (!I)
+      continue;
+    buildInducedSubgraph(I, Visited);
+  }
+}
+
 bool UndefPropagationPass::propagateUndef(Function &F) {
   bool Changed = false;
+  DenseSet<const Instruction *> Visited;
 
-  // FIMXE: only look at the induced subgraph on undef.
+  // Build eagerly the induced SSA subgraph on undef.
   for (const Instruction &I : instructions(F)) {
     LatticeMap[&I] = UndefLattice();
-    SCCFinder.Start(&I);
+    for (auto &Op : I.operands())
+      if (isa<UndefValue>(&Op))
+        buildInducedSubgraph(&I, Visited);
   }
 
   // SCCs are inherently discovered in post-order, but we want
