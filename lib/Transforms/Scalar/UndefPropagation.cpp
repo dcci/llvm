@@ -317,9 +317,9 @@ void UndefPropagationPass::processSCC(SmallPtrSet<const Value *, 8> &Component,
     // this should converge really quickly without fancier visitation
     // strategies, although one can prove that you can do better.
     if (isa<PHINode>(I))
-      Changed = processPHI(cast<const PHINode>(I));
+      processPHI(cast<const PHINode>(I));
     else
-      Changed = processInstruction(I);
+      processInstruction(I);
 
     // OK, we found out something changed, i.e. we had a transition down
     // the lattice. Propagate to all the users of the instruction *within*
@@ -327,21 +327,19 @@ void UndefPropagationPass::processSCC(SmallPtrSet<const Value *, 8> &Component,
     // re-examined. Also remember the edges flowing from this SCC to another
     // so once we're done examining the SCC we can use it to propagate
     // the information inter-SCC.
-    if (Changed) {
-      UndefLattice &LI = getLatticeFor(I);
-      for (auto *U : I->users()) {
-        auto *UI = dyn_cast<Instruction>(U);
-        if (!UI)
-          continue;
-        if (!areInTheSameSCC(I, UI)) {
-          InterSCCEdges.insert({I, UI});
-          continue;
-        }
-        UndefLattice &LI2 = getLatticeFor(UI);
-        Changed = LI2.meet(LI);
-        if (Changed)
-          Worklist.insert(UI);
+    UndefLattice &LI = getLatticeFor(I);
+    for (auto *U : I->users()) {
+      auto *UI = dyn_cast<Instruction>(U);
+      if (!UI)
+        continue;
+      if (!areInTheSameSCC(I, UI)) {
+        InterSCCEdges.insert({I, UI});
+        continue;
       }
+      UndefLattice &LI2 = getLatticeFor(UI);
+      Changed = LI2.meet(LI);
+      if (Changed)
+        Worklist.insert(UI);
     }
   }
   DEBUG(dbgs() << "End processing SCC\n");
