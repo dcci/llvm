@@ -32,14 +32,6 @@ struct UseDefSCC {
       FindSCC(Start);
   }
 
-  const SmallPtrSetImpl<const Value *> &getComponentFor(const Value *V) const {
-    unsigned ComponentID = ValueToComponent.lookup(V);
-
-    assert(ComponentID > 0 &&
-           "Asking for a component for a value we never processed");
-    return Components[ComponentID];
-  }
-
   // Store the components as vector of ptr sets, because we need the topo order
   // of SCC's, but not individual member order
   SmallVector<SmallPtrSet<const Value *, 8>, 8> Components;
