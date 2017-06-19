@@ -242,24 +242,19 @@ bool UndefPropagationPass::processInstruction(const Instruction *I) {
 
   // Look at the lattice values associated with the operands and see if we can
   // use them to propagate some information.
+  auto getLatticeUndef = [this](Instruction *I) -> Value * {
+    if (I) {
+      UndefLattice &L = getLatticeFor(I);
+      if (L.isUndef())
+        return UndefValue::get(I->getType());
+    }
+    return nullptr;
+  };
   auto *Op0 = dyn_cast<Instruction>(I->getOperand(0));
   auto *Op1 = dyn_cast<Instruction>(I->getOperand(1));
   if (Op0 || Op1) {
-    Value *V1 = nullptr;
-    Value *V2 = nullptr;
-
-    // FIXME: factor out these two into a lambda.
-    if (Op0) {
-      UndefLattice &L1 = getLatticeFor(Op0);
-      if (L1.isUndef())
-        V1 = UndefValue::get(I->getType());
-    }
-    if (Op1) {
-      UndefLattice &L2 = getLatticeFor(Op1);
-      if (L2.isUndef())
-        V2 = UndefValue::get(I->getType());
-    }
-
+    Value *V1 = getLatticeUndef(Op0);
+    Value *V2 = getLatticeUndef(Op1);
     Value *Simplified =
         SimplifyBinOp(I->getOpcode(), V1 ? V1 : I->getOperand(0),
                       V2 ? V2 : I->getOperand(1), SQ);
