@@ -38,7 +38,7 @@ TEST(SSAUpdaterNew, SimpleMerge) {
   B.SetInsertPoint(FalseBB);
   B.CreateBr(MergeBB);
   Argument *FirstArg = &*F->arg_begin();
-  Argument *SecondArg = &*(++(F->arg_begin()));
+  Argument *SecondArg = &*(F->arg_begin() + 1);
   B.SetInsertPoint(&TrueBB->front());
   Value *AddOp = B.CreateAdd(FirstArg, SecondArg);
   Updater.setType(0, B.getInt32Ty());

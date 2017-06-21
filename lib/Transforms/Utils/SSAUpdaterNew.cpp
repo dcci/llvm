@@ -243,10 +243,13 @@ struct TarjanSCC {
 
 // Condense the set of SCCs and by extension, necessary phis
 void SSAUpdaterNew::processSCC(const SmallPtrSetImpl<PHINode *> &Component) {
+#ifndef NDEBUG
   DEBUG(dbgs() << "Start component\n");
   for (auto *Member : Component)
     DEBUG(dbgs() << "Component member is " << *Member << "\n");
   DEBUG(dbgs() << "End component\n");
+#endif
+
   // We already processed trivial components
   if (Component.size() == 1)
     return;
