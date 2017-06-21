@@ -41,6 +41,7 @@ add_llvm_library(LLVMTransformUtils
   PromoteMemoryToRegister.cpp
   StripGCRelocates.cpp
   SSAUpdater.cpp
+  SSAUpdaterNew.cpp
   SanitizerStats.cpp
   SimplifyCFG.cpp
   SimplifyIndVar.cpp
